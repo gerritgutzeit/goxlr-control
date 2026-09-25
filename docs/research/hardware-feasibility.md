@@ -44,7 +44,15 @@ Press = `false→true`, Release = `true→false`. Long-Press über lokale Hold-D
 
 ## Lighting
 
-Mini unterstützt Fader- und Button-Farben über Utility-Commands. Firmware-eigene Mute-Farben können kollidieren. Milestone 8; nicht MVP-kritisch.
+Mini unterstützt Fader- und Button-Farben über Utility-Commands (`SetFaderColours`, `SetButtonColours`, `SetFaderDisplayStyle`).
+
+**Implementiert (M8):** `LightingFeedbackService` mit Modi `Off` | `Status` | `PeakProxy`.
+
+- Status: Zuordnung / Mute / Soft-Takeover / Pause als Farben
+- PeakProxy: Windows-Peaks (`IAudioMeterInformation`) → Helligkeit der zwei Faderfarben (gedrosselt ≤10 Hz)
+- Firmware-`Meter`/`GradientMeter` wird **nicht** für Windows-Audio genutzt (nur GoXLR-Kanal)
+
+Firmware-eigene Mute-Farben können kollidieren — Hardware-Validierung H11–H13.
 
 ## Audio-Unabhängigkeit
 

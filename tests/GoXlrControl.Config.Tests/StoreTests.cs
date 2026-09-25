@@ -43,7 +43,8 @@ public class ProfileStoreTests
             var s = store.Load();
             s.CloseToTray.Should().BeTrue();
             s.SyncModeDefault.Should().Be(SyncMode.SoftTakeover);
-            s.SchemaVersion.Should().Be(1);
+            s.SchemaVersion.Should().Be(2);
+            s.DiscordMuteChord.Should().Be("Ctrl+Shift+M");
         }
         finally
         {

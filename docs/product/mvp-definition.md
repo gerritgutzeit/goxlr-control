@@ -12,10 +12,12 @@
 
 - Hardware Lighting Sync (M8)
 - OBS
-- Discord Local RPC confirmed state
+- Discord confirmed mute/deafen (HYBRID/NATIVE) — **approval-gated**, nicht angenommen
 - Auto Profile Switching
 - Direct USB Fallback
 - Double-Press / Modifier-Makros
+
+Discord Mute/Deafen im MVP = **FALLBACK** (`IDiscordIntegration` + Shortcuts). Confirmed State erst nach Discord Social-SDK-/Partner-Freigabe.
 
 ## Frühestes Teilprodukt
 

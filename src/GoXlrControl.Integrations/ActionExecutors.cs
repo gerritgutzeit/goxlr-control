@@ -1,6 +1,5 @@
 using GoXlrControl.Config;
 using GoXlrControl.Engine;
-using Microsoft.Extensions.Logging;
 
 namespace GoXlrControl.Integrations;
 
@@ -57,62 +56,24 @@ public sealed class ShortcutActionExecutor : IActionExecutor
 
 public sealed class DiscordMuteActionExecutor : IActionExecutor
 {
-    private readonly SendInputShortcutService _shortcuts;
-    private readonly Func<string?> _chordProvider;
-    private readonly ILogger<DiscordMuteActionExecutor>? _logger;
+    private readonly IDiscordIntegration _discord;
     public ActionType ActionType => ActionType.DiscordMute;
-    public event EventHandler? CommandSent;
 
-    public DiscordMuteActionExecutor(
-        SendInputShortcutService shortcuts,
-        Func<string?> chordProvider,
-        ILogger<DiscordMuteActionExecutor>? logger = null)
-    {
-        _shortcuts = shortcuts;
-        _chordProvider = chordProvider;
-        _logger = logger;
-    }
+    public DiscordMuteActionExecutor(IDiscordIntegration discord) => _discord = discord;
 
-    public Task ExecuteAsync(ActionRef action, CancellationToken cancellationToken = default)
-    {
-        var chord = action.Parameters.GetValueOrDefault("chord") ?? _chordProvider();
-        if (string.IsNullOrWhiteSpace(chord))
-            throw new InvalidOperationException("Discord Mute Shortcut ist nicht konfiguriert.");
-        _shortcuts.SendChord(chord);
-        _logger?.LogInformation("Discord Mute Shortcut gesendet (Command sent — nicht bestätigt).");
-        CommandSent?.Invoke(this, EventArgs.Empty);
-        return Task.CompletedTask;
-    }
+    public Task ExecuteAsync(ActionRef action, CancellationToken cancellationToken = default) =>
+        _discord.ToggleMuteAsync(cancellationToken);
 }
 
 public sealed class DiscordDeafenActionExecutor : IActionExecutor
 {
-    private readonly SendInputShortcutService _shortcuts;
-    private readonly Func<string?> _chordProvider;
-    private readonly ILogger<DiscordDeafenActionExecutor>? _logger;
+    private readonly IDiscordIntegration _discord;
     public ActionType ActionType => ActionType.DiscordDeafen;
-    public event EventHandler? CommandSent;
 
-    public DiscordDeafenActionExecutor(
-        SendInputShortcutService shortcuts,
-        Func<string?> chordProvider,
-        ILogger<DiscordDeafenActionExecutor>? logger = null)
-    {
-        _shortcuts = shortcuts;
-        _chordProvider = chordProvider;
-        _logger = logger;
-    }
+    public DiscordDeafenActionExecutor(IDiscordIntegration discord) => _discord = discord;
 
-    public Task ExecuteAsync(ActionRef action, CancellationToken cancellationToken = default)
-    {
-        var chord = action.Parameters.GetValueOrDefault("chord") ?? _chordProvider();
-        if (string.IsNullOrWhiteSpace(chord))
-            throw new InvalidOperationException("Discord Deafen Shortcut ist nicht konfiguriert.");
-        _shortcuts.SendChord(chord);
-        _logger?.LogInformation("Discord Deafen Shortcut gesendet (Command sent — nicht bestätigt).");
-        CommandSent?.Invoke(this, EventArgs.Empty);
-        return Task.CompletedTask;
-    }
+    public Task ExecuteAsync(ActionRef action, CancellationToken cancellationToken = default) =>
+        _discord.ToggleDeafenAsync(cancellationToken);
 }
 
 public sealed class MediaPlayPauseExecutor : IActionExecutor

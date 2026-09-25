@@ -22,6 +22,9 @@ public partial class MainViewModel : ObservableObject
     private readonly DiagnosticLog _log;
     private readonly SettingsStore _settingsStore;
     private readonly UtilityPatcher _patcher;
+    private readonly UpdateService _updates;
+    private readonly LightingFeedbackService _lighting;
+    private readonly IDiscordIntegration _discord;
 
     public MainViewModel(
         AppBootstrapper bootstrap,
@@ -31,7 +34,10 @@ public partial class MainViewModel : ObservableObject
         ProfileStore profiles,
         DiagnosticLog log,
         SettingsStore settingsStore,
-        UtilityPatcher patcher)
+        UtilityPatcher patcher,
+        UpdateService updates,
+        LightingFeedbackService lighting,
+        IDiscordIntegration discord)
     {
         _bootstrap = bootstrap;
         _hardware = hardware;
@@ -41,6 +47,9 @@ public partial class MainViewModel : ObservableObject
         _log = log;
         _settingsStore = settingsStore;
         _patcher = patcher;
+        _updates = updates;
+        _lighting = lighting;
+        _discord = discord;
 
         Faders =
         [
@@ -60,6 +69,7 @@ public partial class MainViewModel : ObservableObject
             vm.HardwareValue = e.NormalizedValue;
             vm.Channel = e.ChannelName;
             vm.Raw = e.RawVolume;
+            vm.SoftTakeoverPending = _engine.HasSoftTakeoverPending(e.Fader);
         });
         _hardware.ButtonChanged += (_, e) => App.Current.Dispatcher.Invoke(() =>
         {
@@ -69,6 +79,13 @@ public partial class MainViewModel : ObservableObject
         {
             if (_engine.LastTargetValues.TryGetValue(id, out var v))
                 Faders[(int)id].TargetValue = v;
+            Faders[(int)id].SoftTakeoverPending = _engine.HasSoftTakeoverPending(id);
+        });
+        _engine.SoftTakeoverPendingChanged += (_, id) => App.Current.Dispatcher.Invoke(() =>
+        {
+            Faders[(int)id].SoftTakeoverPending = _engine.HasSoftTakeoverPending(id);
+            if (_engine.LastTargetValues.TryGetValue(id, out var v))
+                Faders[(int)id].TargetValue = v;
         });
         _log.EntryAdded += (_, line) => App.Current.Dispatcher.Invoke(() =>
         {
@@ -76,11 +93,32 @@ public partial class MainViewModel : ObservableObject
             if (LogLines.Count > 300) LogLines.RemoveAt(LogLines.Count - 1);
         });
         _bootstrap.Changed += (_, _) => App.Current.Dispatcher.Invoke(RefreshAll);
+        _lighting.DiagnosticsChanged += (_, _) => App.Current.Dispatcher.Invoke(() =>
+        {
+            LightingDiagnostics = _lighting.DiagnosticsSummary;
+        });
+        _updates.PropertyChanged += (_, e) => App.Current.Dispatcher.Invoke(() =>
+        {
+            if (e.PropertyName is nameof(UpdateService.UpdateAvailable)
+                or nameof(UpdateService.AvailableVersion)
+                or nameof(UpdateService.IsBusy))
+            {
+                ShowUpdateButton = _updates.UpdateAvailable;
+                UpdateBusy = _updates.IsBusy;
+                if (_updates.UpdateAvailable && !string.IsNullOrEmpty(_updates.AvailableVersion))
+                    StatusMessage = $"Update {_updates.AvailableVersion} verfügbar";
+                ApplyUpdateCommand.NotifyCanExecuteChanged();
+            }
+        });
+
+        _discord.StateChanged += (_, snap) => App.Current.Dispatcher.Invoke(() => ApplyDiscordSnapshot(snap));
+        ApplyDiscordSnapshot(_discord.Current);
 
         RefreshAll();
         ConnectionState = _hardware.ConnectionState.ToString();
         ShowUtilityPatcher = _hardware.ConnectionState is HardwareConnectionState.UtilityMissing
             or HardwareConnectionState.OfficialAppConflict;
+        ShowUpdateButton = _updates.UpdateAvailable;
     }
 
     public ObservableCollection<FaderVm> Faders { get; }
@@ -88,7 +126,7 @@ public partial class MainViewModel : ObservableObject
     public ObservableCollection<ControllerProfile> Profiles { get; } = new();
     public ObservableCollection<AudioEndpointInfo> Endpoints { get; } = new();
     public ObservableCollection<AudioSessionInfo> Sessions { get; } = new();
-    public ObservableCollection<ButtonBinding> Buttons { get; } = new();
+    public ObservableCollection<ButtonVm> Buttons { get; } = new();
 
     [ObservableProperty] private string connectionState = "Disconnected";
     [ObservableProperty] private string deviceSummary = "—";
@@ -104,12 +142,24 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private bool autoStartUtilityDaemon = true;
     [ObservableProperty] private bool showUtilityPatcher;
     [ObservableProperty] private bool utilityPatchBusy;
+    [ObservableProperty] private bool showUpdateButton;
+    [ObservableProperty] private bool updateBusy;
     [ObservableProperty] private string? discordMuteChord;
     [ObservableProperty] private string? discordDeafenChord;
+    [ObservableProperty] private string discordIntegrationMode = nameof(Config.DiscordIntegrationMode.Fallback);
+    [ObservableProperty] private string discordEffectiveMode = "Fallback";
+    [ObservableProperty] private string discordConnectionStatus = "Disconnected";
+    [ObservableProperty] private string discordMuteStatus = "Unknown";
+    [ObservableProperty] private string discordDeafenStatus = "Unknown";
+    [ObservableProperty] private string discordReliability = "Unknown";
+    [ObservableProperty] private string discordStatusTimestamp = "—";
     [ObservableProperty] private string statusMessage = "Bereit";
+    [ObservableProperty] private string selectedLightingMode = nameof(Config.LightingMode.Status);
+    [ObservableProperty] private bool exclusiveLightingControl = true;
+    [ObservableProperty] private string lightingDiagnostics = "—";
     [ObservableProperty] private ControllerProfile? selectedProfile;
     [ObservableProperty] private FaderVm? selectedFader;
-    [ObservableProperty] private ButtonBinding? selectedButton;
+    [ObservableProperty] private ButtonVm? selectedButton;
     [ObservableProperty] private AudioSessionInfo? selectedSession;
 
     [RelayCommand]
@@ -142,12 +192,13 @@ public partial class MainViewModel : ObservableObject
             },
             AggregateSessions = true
         };
+        binding.SyncMode = SyncMode.Absolute;
         binding.Label = SelectedSession.DisplayName;
-        SelectedFader.Label = binding.Label;
-        SelectedFader.TargetSummary = DescribeTarget(binding.Target);
+        SelectedFader.RefreshFrom(binding);
+        SelectedFader.SoftTakeoverPending = false;
         _profiles.Save(SelectedProfile);
         _engine.SetProfile(SelectedProfile);
-        StatusMessage = $"Fader {SelectedFader.Id} → {SelectedSession.DisplayName}";
+        StatusMessage = $"{SelectedFader.HardwareLabel} → {SelectedFader.TargetTitle}";
     }
 
     [RelayCommand]
@@ -156,11 +207,47 @@ public partial class MainViewModel : ObservableObject
         if (SelectedFader is null || SelectedProfile is null) return;
         var binding = SelectedProfile.Faders.First(f => f.FaderId == SelectedFader.Id);
         binding.Target = new FaderTarget { Kind = FaderTargetKind.MasterVolume };
+        binding.SyncMode = SyncMode.Absolute;
         binding.Label = "Master";
-        SelectedFader.Label = binding.Label;
-        SelectedFader.TargetSummary = "Master Volume";
+        SelectedFader.RefreshFrom(binding);
+        SelectedFader.SoftTakeoverPending = false;
         _profiles.Save(SelectedProfile);
         _engine.SetProfile(SelectedProfile);
+        StatusMessage = $"{SelectedFader.HardwareLabel} → {SelectedFader.TargetTitle}";
+    }
+
+    [RelayCommand]
+    private void ClearFaderTarget()
+    {
+        if (SelectedFader is null || SelectedProfile is null) return;
+        var binding = SelectedProfile.Faders.First(f => f.FaderId == SelectedFader.Id);
+        binding.Target = new FaderTarget { Kind = FaderTargetKind.None };
+        binding.Label = SelectedFader.Id switch
+        {
+            "B" => "App 1",
+            "C" => "App 2",
+            "D" => "Music",
+            _ => SelectedFader.Id
+        };
+        SelectedFader.RefreshFrom(binding);
+        SelectedFader.SoftTakeoverPending = false;
+        _profiles.Save(SelectedProfile);
+        _engine.SetProfile(SelectedProfile);
+        StatusMessage = $"{SelectedFader.HardwareLabel} → {SelectedFader.TargetTitle}";
+    }
+
+    [RelayCommand]
+    private void SetFaderSyncMode(string mode)
+    {
+        if (SelectedFader is null || SelectedProfile is null) return;
+        if (!Enum.TryParse<SyncMode>(mode, out var syncMode)) return;
+        var binding = SelectedProfile.Faders.First(f => f.FaderId == SelectedFader.Id);
+        binding.SyncMode = syncMode;
+        SelectedFader.RefreshFrom(binding);
+        SelectedFader.SoftTakeoverPending = false;
+        _profiles.Save(SelectedProfile);
+        _engine.SetProfile(SelectedProfile);
+        StatusMessage = $"{SelectedFader.HardwareLabel} Sync = {binding.SyncMode}";
     }
 
     [RelayCommand]
@@ -168,10 +255,74 @@ public partial class MainViewModel : ObservableObject
     {
         if (SelectedButton is null || SelectedProfile is null) return;
         if (!Enum.TryParse<ActionType>(actionType, out var type)) return;
-        SelectedButton.OnPress = new ActionRef { Type = type };
+        var binding = SelectedProfile.Buttons.FirstOrDefault(b =>
+            b.ButtonId.Equals(SelectedButton.ButtonId, StringComparison.OrdinalIgnoreCase));
+        if (binding is null) return;
+        binding.OnPress = new ActionRef { Type = type };
+        SelectedButton.RefreshFrom(binding);
         _profiles.Save(SelectedProfile);
         _engine.SetProfile(SelectedProfile);
-        StatusMessage = $"{SelectedButton.ButtonId} → {type}";
+        StatusMessage = $"{SelectedButton.HardwareLabel} → {SelectedButton.ActionTitle}";
+    }
+
+    [RelayCommand]
+    private async Task TestDiscordMuteAsync()
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(DiscordMuteChord))
+            {
+                StatusMessage = "Discord Mute Chord fehlt — unter Einstellungen z.B. Ctrl+Shift+M setzen und Speichern.";
+                return;
+            }
+
+            // Push live VM chords into bootstrap so Fallback reads them without requiring Speichern first.
+            ApplyDiscordChordsToLiveSettings();
+            await _discord.ToggleMuteAsync();
+            StatusMessage =
+                $"Shortcut gesendet ({DiscordMuteChord}). Discord: Einstellungen → Tastenkürzel → " +
+                $"denselben Chord für „Stummschalten“ setzen. Discord + App beide als Admin oder beide normal.";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Discord Mute fehlgeschlagen: {ex.Message}";
+            _log.Warn(StatusMessage);
+        }
+    }
+
+    private void ApplyDiscordChordsToLiveSettings()
+    {
+        var s = _bootstrap.Settings;
+        s.DiscordMuteChord = DiscordMuteChord;
+        s.DiscordDeafenChord = DiscordDeafenChord;
+    }
+
+    [RelayCommand]
+    private void SyncDiscordMuteOn()
+    {
+        _discord.SyncMirroredMute(true);
+        StatusMessage = "Mirror: Discord Mute = an (LED rot). Kein Shortcut gesendet.";
+    }
+
+    [RelayCommand]
+    private void SyncDiscordMuteOff()
+    {
+        _discord.SyncMirroredMute(false);
+        StatusMessage = "Mirror: Discord Mute = aus (LED türkis). Kein Shortcut gesendet.";
+    }
+
+    [RelayCommand]
+    private void SyncDiscordDeafenOn()
+    {
+        _discord.SyncMirroredDeafen(true);
+        StatusMessage = "Mirror: Discord Deafen = an. Kein Shortcut gesendet.";
+    }
+
+    [RelayCommand]
+    private void SyncDiscordDeafenOff()
+    {
+        _discord.SyncMirroredDeafen(false);
+        StatusMessage = "Mirror: Discord Deafen = aus. Kein Shortcut gesendet.";
     }
 
     [RelayCommand]
@@ -242,9 +393,19 @@ public partial class MainViewModel : ObservableObject
         s.AutoStartUtilityDaemon = AutoStartUtilityDaemon;
         s.DiscordMuteChord = DiscordMuteChord;
         s.DiscordDeafenChord = DiscordDeafenChord;
+        s.DiscordIntegrationMode = Enum.TryParse<Config.DiscordIntegrationMode>(DiscordIntegrationMode, true, out var dm)
+            ? dm
+            : Config.DiscordIntegrationMode.Fallback;
         s.ControllerPaused = ControllerPaused;
+        s.LightingMode = Enum.TryParse<Config.LightingMode>(SelectedLightingMode, true, out var lm)
+            ? lm
+            : Config.LightingMode.Status;
+        s.ExclusiveLightingControl = ExclusiveLightingControl;
         _bootstrap.SaveSettings(s);
-        StatusMessage = "Einstellungen gespeichert. Hardware-Provider-Wechsel erfordert Neustart.";
+        DiscordEffectiveMode = _discord.Mode.ToString();
+        StatusMessage = s.DiscordIntegrationMode == Config.DiscordIntegrationMode.Fallback
+            ? "Einstellungen gespeichert."
+            : "Einstellungen gespeichert. Hybrid/Native laufen noch als Fallback (Shortcuts) — Discord-Approval fehlt.";
     }
 
     [RelayCommand(CanExecute = nameof(CanPatchUtility))]
@@ -280,6 +441,15 @@ public partial class MainViewModel : ObservableObject
 
     private bool CanPatchUtility() => !UtilityPatchBusy;
 
+    [RelayCommand(CanExecute = nameof(CanApplyUpdate))]
+    private async Task ApplyUpdateAsync()
+    {
+        StatusMessage = "Update wird geladen…";
+        await _updates.ApplyUpdateAsync();
+    }
+
+    private bool CanApplyUpdate() => ShowUpdateButton && !UpdateBusy;
+
     [RelayCommand]
     private void ExportDiagnostics()
     {
@@ -289,7 +459,11 @@ public partial class MainViewModel : ObservableObject
         {
             ["Connection"] = ConnectionState,
             ["Device"] = DeviceSummary.Replace('\n', ' '),
-            ["Profile"] = ActiveProfileName
+            ["Profile"] = ActiveProfileName,
+            ["DiscordMode"] = DiscordIntegrationMode,
+            ["DiscordReliability"] = DiscordReliability,
+            ["DiscordMute"] = DiscordMuteStatus,
+            ["DiscordDeafen"] = DiscordDeafenStatus
         });
         System.IO.File.WriteAllText(dlg.FileName, report);
         StatusMessage = "Diagnose exportiert.";
@@ -318,6 +492,12 @@ public partial class MainViewModel : ObservableObject
         AutoStartUtilityDaemon = s.AutoStartUtilityDaemon;
         DiscordMuteChord = s.DiscordMuteChord;
         DiscordDeafenChord = s.DiscordDeafenChord;
+        DiscordIntegrationMode = s.DiscordIntegrationMode.ToString();
+        DiscordEffectiveMode = _discord.Mode.ToString();
+        ApplyDiscordSnapshot(_discord.Current);
+        SelectedLightingMode = s.LightingMode.ToString();
+        ExclusiveLightingControl = s.ExclusiveLightingControl;
+        LightingDiagnostics = _lighting.DiagnosticsSummary;
         ActiveProfileName = _engine.ActiveProfile.Name;
         SyncFaderLabels(_engine.ActiveProfile);
     }
@@ -344,24 +524,115 @@ public partial class MainViewModel : ObservableObject
 
     private void LoadButtons()
     {
+        var previousId = SelectedButton?.ButtonId;
         Buttons.Clear();
         foreach (var b in _engine.ActiveProfile.Buttons)
-            Buttons.Add(b);
+            Buttons.Add(ButtonVm.FromBinding(b));
+        SelectedButton = Buttons.FirstOrDefault(b =>
+                               previousId is not null &&
+                               b.ButtonId.Equals(previousId, StringComparison.OrdinalIgnoreCase))
+                           ?? Buttons.FirstOrDefault();
     }
 
     private void SyncFaderLabels(ControllerProfile profile)
     {
+        var previousId = SelectedFader?.Id;
         foreach (var f in profile.Faders)
         {
             var vm = Faders.FirstOrDefault(x => x.Id == f.FaderId);
             if (vm is null) continue;
-            vm.Label = string.IsNullOrWhiteSpace(f.Label) ? f.FaderId : f.Label;
-            vm.TargetSummary = DescribeTarget(f.Target);
-            vm.SyncMode = f.SyncMode.ToString();
+            vm.RefreshFrom(f);
+            if (Enum.TryParse<FaderId>(f.FaderId, true, out var fid))
+                vm.SoftTakeoverPending = _engine.HasSoftTakeoverPending(fid);
         }
+
+        SelectedFader = Faders.FirstOrDefault(x =>
+                               previousId is not null &&
+                               x.Id.Equals(previousId, StringComparison.OrdinalIgnoreCase))
+                       ?? SelectedFader
+                       ?? Faders.FirstOrDefault();
     }
 
-    private static string DescribeTarget(FaderTarget t) => t.Kind switch
+    private void ApplyDiscordSnapshot(DiscordVoiceSnapshot snap)
+    {
+        DiscordConnectionStatus = snap.Connection.ToString();
+        DiscordMuteStatus = FormatTriState(snap.Mute);
+        DiscordDeafenStatus = FormatTriState(snap.Deafen);
+        DiscordReliability = FormatReliability(snap.Reliability);
+        DiscordStatusTimestamp = snap.StatusConfirmedAt?.ToLocalTime().ToString("HH:mm:ss") ?? "—";
+    }
+
+    private static string FormatTriState(DiscordTriState s) => s switch
+    {
+        DiscordTriState.On => "On",
+        DiscordTriState.Off => "Off",
+        _ => "Unknown"
+    };
+
+    private static string FormatReliability(DiscordStatusReliability r) => r switch
+    {
+        DiscordStatusReliability.Confirmed => "Confirmed",
+        DiscordStatusReliability.Mirrored => "Mirrored (LED)",
+        DiscordStatusReliability.CommandSent => "Command sent",
+        _ => "Unknown"
+    };
+}
+
+public partial class FaderVm : ObservableObject
+{
+    public FaderVm(string id)
+    {
+        Id = id;
+        HardwareLabel = DescribeHardwareLabel(id);
+        HardwareHint = DescribeHardwareHint(id, "—");
+    }
+
+    public string Id { get; }
+
+    [ObservableProperty] private string label = "";
+    [ObservableProperty] private string channel = "—";
+    [ObservableProperty] private double hardwareValue;
+    [ObservableProperty] private double targetValue;
+    [ObservableProperty] private byte raw;
+    [ObservableProperty] private string targetSummary = "—";
+    [ObservableProperty] private string syncMode = "Absolute";
+    [ObservableProperty] private bool softTakeoverPending;
+    [ObservableProperty] private string hardwareLabel = "";
+    [ObservableProperty] private string hardwareHint = "";
+    [ObservableProperty] private string targetTitle = "";
+    [ObservableProperty] private string targetDetail = "";
+
+    public void RefreshFrom(FaderBinding binding)
+    {
+        Label = string.IsNullOrWhiteSpace(binding.Label) ? binding.FaderId : binding.Label;
+        HardwareLabel = DescribeHardwareLabel(Id);
+        HardwareHint = DescribeHardwareHint(Id, Channel);
+        TargetTitle = DescribeTargetTitle(binding.Target);
+        TargetSummary = TargetTitle;
+        TargetDetail = DescribeTargetDetail(binding);
+        SyncMode = binding.SyncMode.ToString();
+    }
+
+    partial void OnChannelChanged(string value) =>
+        HardwareHint = DescribeHardwareHint(Id, value);
+
+    private static string DescribeHardwareLabel(string faderId) => $"Fader {faderId}";
+
+    private static string DescribeHardwareHint(string faderId, string channel)
+    {
+        var placement = faderId switch
+        {
+            "A" => "Physischer Fader ganz links",
+            "B" => "Zweiter Fader von links",
+            "C" => "Dritter Fader von links",
+            "D" => "Physischer Fader ganz rechts",
+            _ => "GoXLR-Hardwarefader"
+        };
+        var ch = string.IsNullOrWhiteSpace(channel) ? "—" : channel;
+        return $"{placement} · Utility-Kanal {ch}";
+    }
+
+    private static string DescribeTargetTitle(FaderTarget t) => t.Kind switch
     {
         FaderTargetKind.None => "Nicht zugewiesen",
         FaderTargetKind.MasterVolume => "Master Volume",
@@ -371,17 +642,104 @@ public partial class MainViewModel : ObservableObject
         FaderTargetKind.DiscordPlayback => "Discord Playback",
         _ => t.Kind.ToString()
     };
+
+    private static string DescribeTargetDetail(FaderBinding binding)
+    {
+        var sync = binding.SyncMode == Config.SyncMode.Absolute
+            ? "Sync Absolute: setzt die Windows-Lautstärke sofort."
+            : "Sync Soft-Takeover: greift erst, wenn der Fader die aktuelle Windows-Position kreuzt (kein Sprung).";
+
+        var target = binding.Target.Kind switch
+        {
+            FaderTargetKind.None =>
+                "Kein Windows-Ziel zugewiesen. Der Fader steuert nichts in Control Studio.",
+            FaderTargetKind.MasterVolume =>
+                "Steuert die Windows-Master-Wiedergabelautstärke.",
+            FaderTargetKind.Application =>
+                $"Steuert die Lautstärke von {binding.Target.Application?.DisplayName ?? "der App"}.",
+            FaderTargetKind.ApplicationGroup =>
+                $"Steuert eine Gruppe von {binding.Target.Applications.Count} Apps.",
+            FaderTargetKind.EndpointVolume =>
+                $"Steuert das Wiedergabegerät {binding.Target.DeviceId}.",
+            FaderTargetKind.DiscordPlayback =>
+                "Steuert die Discord-Wiedergabelautstärke.",
+            _ => "Zugewiesenes Lautstärkeziel."
+        };
+
+        return $"{target} {sync}";
+    }
 }
 
-public partial class FaderVm : ObservableObject
+public partial class ButtonVm : ObservableObject
 {
-    public FaderVm(string id) => Id = id;
-    public string Id { get; }
-    [ObservableProperty] private string label = "";
-    [ObservableProperty] private string channel = "—";
-    [ObservableProperty] private double hardwareValue;
-    [ObservableProperty] private double targetValue;
-    [ObservableProperty] private byte raw;
-    [ObservableProperty] private string targetSummary = "—";
-    [ObservableProperty] private string syncMode = "SoftTakeover";
+    public string ButtonId { get; private set; } = "";
+
+    [ObservableProperty] private string hardwareLabel = "";
+    [ObservableProperty] private string hardwareHint = "";
+    [ObservableProperty] private string actionTitle = "";
+    [ObservableProperty] private string actionDetail = "";
+    [ObservableProperty] private string ledHint = "";
+    [ObservableProperty] private string listLine = "";
+
+    public static ButtonVm FromBinding(ButtonBinding binding)
+    {
+        var vm = new ButtonVm();
+        vm.RefreshFrom(binding);
+        return vm;
+    }
+
+    public void RefreshFrom(ButtonBinding binding)
+    {
+        ButtonId = binding.ButtonId;
+        (HardwareLabel, HardwareHint) = DescribeHardware(binding.ButtonId);
+        (ActionTitle, ActionDetail, LedHint) = DescribeAction(binding.OnPress.Type);
+        ListLine = $"{HardwareLabel}  ·  {ActionTitle}";
+    }
+
+    private static (string Label, string Hint) DescribeHardware(string buttonId) => buttonId switch
+    {
+        "Fader1Mute" => ("Mute A", "Taste unter Fader A — physische Mute-Taste links"),
+        "Fader2Mute" => ("Mute B", "Taste unter Fader B"),
+        "Fader3Mute" => ("Mute C", "Taste unter Fader C"),
+        "Fader4Mute" => ("Mute D", "Taste unter Fader D"),
+        "Bleep" => ("Bleep", "Bleep-Taste (Mini: oft Media / SFX)"),
+        "Cough" => ("Cough", "Cough-Taste — Standard für Discord Mic-Mute"),
+        _ => (buttonId, "GoXLR-Hardwaretaste")
+    };
+
+    private static (string Title, string Detail, string Led) DescribeAction(ActionType type) => type switch
+    {
+        ActionType.ToggleMasterMute => (
+            "Windows Master-Mute",
+            "Schaltet die Windows-Wiedergabe-Lautstärke stumm (nicht Discord-Mikrofon).",
+            "LED: Rot wenn Windows stumm, sonst Türkis/Grau."),
+        ActionType.DiscordMute => (
+            "Discord Mic-Mute",
+            "Sendet den Discord-Mute-Shortcut (Toggle). LED folgt dem lokalen Mirror.",
+            "LED: Rot = Mirror stumm, Türkis = offen, Amber = noch unbekannt."),
+        ActionType.DiscordDeafen => (
+            "Discord Deafen (Headset)",
+            "Sendet den Discord-Deafen-Shortcut (Toggle). Deafen mutet in Discord auch das Mic.",
+            "LED: Rot = Mirror deafen an, Türkis = aus, Amber = unbekannt."),
+        ActionType.MediaPlayPause => (
+            "Media Play/Pause",
+            "System-Media-Taste Play/Pause.",
+            "LED: keine Discord-/Mute-Anzeige."),
+        ActionType.MediaNext => (
+            "Media Next",
+            "Nächster Titel (System-Media).",
+            "LED: keine Discord-/Mute-Anzeige."),
+        ActionType.MediaPrevious => (
+            "Media Previous",
+            "Vorheriger Titel (System-Media).",
+            "LED: keine Discord-/Mute-Anzeige."),
+        ActionType.None => (
+            "Keine Aktion",
+            "Control Studio sendet nichts. Die GoXLR-Firmware kann die Taste trotzdem intern nutzen.",
+            "LED: grau / unverändert."),
+        _ => (
+            type.ToString(),
+            "Zugewiesene Aktion.",
+            "LED: abhängig von der Aktion.")
+    };
 }

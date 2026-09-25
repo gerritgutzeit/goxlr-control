@@ -25,6 +25,15 @@
 | H8 | Sleep/Resume | | |
 | H9 | Pipe-Name `@goxlr.socket` | | |
 | H10 | Latenz Event→Volume (M3) | | |
+| H11 | Statusfarben: Mapping/Mute/Pause/Soft-Takeover sichtbar | | |
+| H12 | PeakProxy reagiert auf Spotify/Browser ohne GoXLR-Routing | | |
+| H13 | USB-Last / Flackern bei ~10 Hz PeakProxy akzeptabel | | |
+
+## Lighting-Hinweise
+
+- Firmware-`Meter`-Modus wird **nicht** für Windows-Peaks genutzt (nur GoXLR-Kanal-Audio).
+- Erwartetes Feedback: `TwoColour`/`Gradient` über `SetFaderColours`.
+- Discord-LEDs = nie „confirmed mute“.
 
 ## Notizen
 

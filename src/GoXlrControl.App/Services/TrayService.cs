@@ -20,11 +20,14 @@ public sealed class TrayService : IDisposable
 
         try
         {
-            _icon.Icon = System.Drawing.SystemIcons.Application;
+            var exe = Environment.ProcessPath;
+            if (!string.IsNullOrEmpty(exe))
+                _icon.Icon = System.Drawing.Icon.ExtractAssociatedIcon(exe);
+            _icon.Icon ??= System.Drawing.SystemIcons.Application;
         }
         catch
         {
-            // Icon optional
+            try { _icon.Icon = System.Drawing.SystemIcons.Application; } catch { /* Icon optional */ }
         }
 
         var menu = new System.Windows.Controls.ContextMenu();

@@ -11,4 +11,5 @@
 | Session EventContext | Mittel | NAudio-Lücke | COM-Shim |
 | UIPI Admin Games | Mittel | DOCUMENTED | Docs |
 | API Schema Drift | Mittel | — | Fixtures @ 1.2.4 |
-| Discord State | Niedrig | — | Command-sent only |
+| Discord State | Mittel | FALLBACK aktiv | `IDiscordIntegration`: ohne genehmigte API nur CommandSent/UNKNOWN; Hybrid/Native gated (`DiscordAuthorizationGate`) |
+| Discord Restricted Scopes | Hoch | GATED | Keine `rpc.voice.*`-Calls ohne Partner-Approval; siehe `docs/planning/discord-approval-checklist.md` |

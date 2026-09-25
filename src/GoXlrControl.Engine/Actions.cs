@@ -39,6 +39,10 @@ public interface IVolumeSink
     Task ToggleApplicationMuteAsync(AppIdentity identity, CancellationToken ct = default);
     Task<double> GetMasterVolumeAsync(CancellationToken ct = default);
     Task<double?> GetApplicationVolumeAsync(AppIdentity identity, CancellationToken ct = default);
+    Task<bool> GetMasterMuteAsync(CancellationToken ct = default);
+    Task<bool?> GetApplicationMuteAsync(AppIdentity identity, CancellationToken ct = default);
+    Task<double> GetMasterPeakAsync(CancellationToken ct = default);
+    Task<double> GetApplicationPeakAsync(AppIdentity identity, CancellationToken ct = default);
 }
 
 public sealed class NullVolumeSink : IVolumeSink
@@ -51,4 +55,8 @@ public sealed class NullVolumeSink : IVolumeSink
     public Task ToggleApplicationMuteAsync(AppIdentity identity, CancellationToken ct = default) => Task.CompletedTask;
     public Task<double> GetMasterVolumeAsync(CancellationToken ct = default) => Task.FromResult(0.5);
     public Task<double?> GetApplicationVolumeAsync(AppIdentity identity, CancellationToken ct = default) => Task.FromResult<double?>(0.5);
+    public Task<bool> GetMasterMuteAsync(CancellationToken ct = default) => Task.FromResult(false);
+    public Task<bool?> GetApplicationMuteAsync(AppIdentity identity, CancellationToken ct = default) => Task.FromResult<bool?>(false);
+    public Task<double> GetMasterPeakAsync(CancellationToken ct = default) => Task.FromResult(0.0);
+    public Task<double> GetApplicationPeakAsync(AppIdentity identity, CancellationToken ct = default) => Task.FromResult(0.0);
 }

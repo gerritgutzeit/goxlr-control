@@ -5,11 +5,13 @@ namespace GoXlrControl.Hardware;
 /// <summary>
 /// Simulated Mini for UI development and automated tests without physical hardware.
 /// </summary>
-public sealed class SimulatedHardwareProvider : IHardwareInputProvider
+public sealed class SimulatedHardwareProvider : IHardwareInputProvider, IHardwareOutputController
 {
     private readonly double[] _faders = [0.5, 0.5, 0.5, 0.5];
     private readonly bool[] _buttons = new bool[6];
     private CancellationTokenSource? _cts;
+    private readonly Dictionary<FaderId, (FaderDisplayStyle Style, string C1, string C2)> _faderLights = new();
+    private readonly Dictionary<HardwareButtonId, (string C1, string C2)> _buttonLights = new();
 
     public HardwareConnectionState ConnectionState { get; private set; } = HardwareConnectionState.Disconnected;
 
@@ -17,6 +19,9 @@ public sealed class SimulatedHardwareProvider : IHardwareInputProvider
     [
         new("SIM-MINI-0001", "Mini", "Simulated GoXLR Mini", "SimProfile", "sim-1.0")
     ];
+
+    public bool CanSendCommands => ConnectionState == HardwareConnectionState.Connected;
+    public string? ActiveSerial => Devices[0].SerialNumber;
 
     public event EventHandler<HardwareConnectionState>? ConnectionChanged;
     public event EventHandler<FaderValueChanged>? FaderChanged;
@@ -63,6 +68,54 @@ public sealed class SimulatedHardwareProvider : IHardwareInputProvider
         _buttons[(int)button] = pressed;
         ButtonChanged?.Invoke(this, new ButtonStateChanged(
             Devices[0].SerialNumber, button, pressed, DateTimeOffset.UtcNow, false));
+    }
+
+    public Task SetFaderDisplayStyleAsync(FaderId fader, FaderDisplayStyle style, CancellationToken ct = default)
+    {
+        var prev = _faderLights.TryGetValue(fader, out var existing)
+            ? existing
+            : (FaderDisplayStyle.TwoColour, "222222", "111111");
+        _faderLights[fader] = (style, prev.Item2, prev.Item3);
+        DiagnosticMessage?.Invoke(this, $"[sim] Fader {fader} style={style}");
+        return Task.CompletedTask;
+    }
+
+    public Task SetFaderColoursAsync(FaderId fader, string colourOneHex, string colourTwoHex, CancellationToken ct = default)
+    {
+        var c1 = GoXlrCommandBuilder.NormalizeHex(colourOneHex);
+        var c2 = GoXlrCommandBuilder.NormalizeHex(colourTwoHex);
+        var style = _faderLights.TryGetValue(fader, out var existing) ? existing.Item1 : FaderDisplayStyle.TwoColour;
+        _faderLights[fader] = (style, c1, c2);
+        DiagnosticMessage?.Invoke(this, $"[sim] Fader {fader} colours={c1}/{c2}");
+        return Task.CompletedTask;
+    }
+
+    public Task SetAllFaderColoursAsync(string colourOneHex, string colourTwoHex, CancellationToken ct = default)
+    {
+        foreach (FaderId f in Enum.GetValues<FaderId>())
+            _ = SetFaderColoursAsync(f, colourOneHex, colourTwoHex, ct);
+        return Task.CompletedTask;
+    }
+
+    public Task SetButtonColoursAsync(HardwareButtonId button, string colourOneHex, string colourTwoHex, CancellationToken ct = default)
+    {
+        var c1 = GoXlrCommandBuilder.NormalizeHex(colourOneHex);
+        var c2 = GoXlrCommandBuilder.NormalizeHex(colourTwoHex);
+        _buttonLights[button] = (c1, c2);
+        DiagnosticMessage?.Invoke(this, $"[sim] Button {button} colours={c1}/{c2}");
+        return Task.CompletedTask;
+    }
+
+    public Task SetButtonOffStyleAsync(HardwareButtonId button, LightingOffStyle style, CancellationToken ct = default)
+    {
+        DiagnosticMessage?.Invoke(this, $"[sim] Button {button} off-style={style}");
+        return Task.CompletedTask;
+    }
+
+    public Task SetAnimationModeAsync(AnimationMode mode, CancellationToken ct = default)
+    {
+        DiagnosticMessage?.Invoke(this, $"[sim] AnimationMode={mode}");
+        return Task.CompletedTask;
     }
 
     private static string ChannelFor(int index) => index switch

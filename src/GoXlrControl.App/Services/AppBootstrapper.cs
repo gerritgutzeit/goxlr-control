@@ -16,6 +16,8 @@ public sealed class AppBootstrapper
     private readonly WindowsAudioService _audio;
     private readonly DiagnosticLog _log;
     private readonly Lazy<TrayService> _tray;
+    private readonly LightingFeedbackService _lighting;
+    private readonly IDiscordIntegration _discord;
     private AppSettings _settings = new();
 
     public AppBootstrapper(
@@ -25,7 +27,9 @@ public sealed class AppBootstrapper
         ControllerEngine engine,
         WindowsAudioService audio,
         DiagnosticLog log,
-        Lazy<TrayService> tray)
+        Lazy<TrayService> tray,
+        LightingFeedbackService lighting,
+        IDiscordIntegration discord)
     {
         _settingsStore = settingsStore;
         _profileStore = profileStore;
@@ -34,6 +38,8 @@ public sealed class AppBootstrapper
         _audio = audio;
         _log = log;
         _tray = tray;
+        _lighting = lighting;
+        _discord = discord;
     }
 
     public AppSettings Settings => _settings;
@@ -57,13 +63,18 @@ public sealed class AppBootstrapper
         _hardware.ConnectionChanged += (_, s) => _log.Info($"Hardware: {s}");
 
         _engine.Start();
-        await _hardware.StartAsync();
-        _tray.Value.Initialize();
+        await _hardware.StartAsync().ConfigureAwait(false);
+        await _discord.StartAsync().ConfigureAwait(false);
+        _lighting.Start();
+        _lighting.DiagnosticsChanged += (_, _) => { /* UI binds via service */ };
         ApplyAutostart(_settings.StartWithWindows);
         SystemEvents.PowerModeChanged += OnPowerModeChanged;
-        _log.Info("Bootstrap abgeschlossen.");
+        _log.Info($"Bootstrap abgeschlossen. Discord-Modus: {_discord.Mode}.");
         Changed?.Invoke(this, EventArgs.Empty);
     }
+
+    /// <summary>Must run on the WPF UI/STA thread (TaskbarIcon).</summary>
+    public void InitializeTray() => _tray.Value.Initialize();
 
     public Task ActivateProfileAsync(string profileId)
     {
@@ -96,6 +107,8 @@ public sealed class AppBootstrapper
     public async Task ShutdownAsync()
     {
         SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+        await _discord.StopAsync();
+        await _lighting.StopAsync();
         _engine.Stop();
         await _hardware.StopAsync();
         _tray.Value.Dispose();
@@ -105,11 +118,13 @@ public sealed class AppBootstrapper
     {
         if (e.Mode == PowerModes.Resume)
         {
-            _log.Info("System Resume — Hardware-Reconnect anstoßen.");
+            _log.Info("System Resume — Hardware- und Discord-Reconnect anstoßen.");
             try
             {
                 await _hardware.StopAsync();
                 await _hardware.StartAsync();
+                await _discord.StopAsync();
+                await _discord.StartAsync();
             }
             catch (Exception ex)
             {

@@ -9,6 +9,13 @@ public enum SyncMode
     Absolute
 }
 
+public enum LightingMode
+{
+    Off,
+    Status,
+    PeakProxy
+}
+
 public enum FaderTargetKind
 {
     None,
@@ -42,9 +49,17 @@ public enum ActionType
     SwitchProfile
 }
 
+/// <summary>Persisted Discord integration mode. Hybrid/Native require Discord approval gates.</summary>
+public enum DiscordIntegrationMode
+{
+    Fallback,
+    Hybrid,
+    Native
+}
+
 public sealed class AppSettings
 {
-    public int SchemaVersion { get; set; } = 1;
+    public int SchemaVersion { get; set; } = 2;
     public bool StartWithWindows { get; set; }
     public bool StartMinimized { get; set; }
     public bool CloseToTray { get; set; } = true;
@@ -54,13 +69,24 @@ public sealed class AppSettings
     public SyncMode SyncModeDefault { get; set; } = SyncMode.SoftTakeover;
     public string LogLevel { get; set; } = "Information";
     public bool WizardCompleted { get; set; }
-    public string? DiscordMuteChord { get; set; }
-    public string? DiscordDeafenChord { get; set; }
+    /// <summary>Must match a Discord keybind (User Settings → Keybinds). FALLBACK sends this via SendInput.</summary>
+    public string? DiscordMuteChord { get; set; } = "Ctrl+Shift+M";
+    public string? DiscordDeafenChord { get; set; } = "Ctrl+Shift+D";
+    /// <summary>Requested mode. Factory forces Fallback until authorized APIs are enabled.</summary>
+    public DiscordIntegrationMode DiscordIntegrationMode { get; set; } = DiscordIntegrationMode.Fallback;
+    /// <summary>Discord application client id — unused until approval path is live.</summary>
+    public string? DiscordClientId { get; set; }
     public bool UseSimulatedHardware { get; set; }
     /// <summary>Start goxlr-daemon automatically when Control Studio connects.</summary>
     public bool AutoStartUtilityDaemon { get; set; } = true;
     public string? ActiveProfileId { get; set; }
     public bool ControllerPaused { get; set; }
+    public LightingMode LightingMode { get; set; } = LightingMode.Status;
+    /// <summary>
+    /// Disable GoXLR animations and pin button on/off colours so firmware mute
+    /// state cannot flash Utility profile colours over our LED feedback.
+    /// </summary>
+    public bool ExclusiveLightingControl { get; set; } = true;
 }
 
 public sealed class AppIdentity
@@ -109,7 +135,7 @@ public sealed class ButtonBinding
 
 public sealed class ControllerProfile
 {
-    public int SchemaVersion { get; set; } = 1;
+    public int SchemaVersion { get; set; } = 2;
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string Name { get; set; } = "Default";
     public string Description { get; set; } = string.Empty;
@@ -120,7 +146,8 @@ public sealed class ControllerProfile
 
     public static List<FaderBinding> CreateDefaultFaders() =>
     [
-        new() { FaderId = "A", Label = "Master", Target = new() { Kind = FaderTargetKind.MasterVolume } },
+        // Absolute: SoftTakeover felt "broken" for Master until the physical fader crossed Windows volume.
+        new() { FaderId = "A", Label = "Master", Target = new() { Kind = FaderTargetKind.MasterVolume }, SyncMode = SyncMode.Absolute },
         new() { FaderId = "B", Label = "App 1", Target = new() { Kind = FaderTargetKind.None } },
         new() { FaderId = "C", Label = "App 2", Target = new() { Kind = FaderTargetKind.None } },
         new() { FaderId = "D", Label = "Music", Target = new() { Kind = FaderTargetKind.None } }

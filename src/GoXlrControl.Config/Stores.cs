@@ -28,7 +28,10 @@ public sealed class SettingsStore
 
         var json = File.ReadAllText(_path);
         var settings = JsonSerializer.Deserialize<AppSettings>(json, JsonConfig.Options) ?? new AppSettings();
+        var before = settings.SchemaVersion;
         SchemaMigrator.MigrateSettings(settings);
+        if (settings.SchemaVersion != before)
+            Save(settings);
         return settings;
     }
 
@@ -134,19 +137,34 @@ public sealed class ProfileStore
         var json = File.ReadAllText(path);
         var profile = JsonSerializer.Deserialize<ControllerProfile>(json, JsonConfig.Options);
         if (profile is null) return null;
+        var before = profile.SchemaVersion;
         SchemaMigrator.MigrateProfile(profile);
+        if (profile.SchemaVersion != before)
+        {
+            profile.SchemaVersion = SchemaMigrator.CurrentSchemaVersion;
+            File.WriteAllText(path, JsonSerializer.Serialize(profile, JsonConfig.Options));
+        }
+
         return profile;
     }
 }
 
 public static class SchemaMigrator
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
 
     public static void MigrateSettings(AppSettings settings)
     {
         if (settings.SchemaVersion < 1)
             settings.SchemaVersion = 1;
+        if (settings.SchemaVersion < 2)
+        {
+            if (string.IsNullOrWhiteSpace(settings.DiscordMuteChord))
+                settings.DiscordMuteChord = "Ctrl+Shift+M";
+            if (string.IsNullOrWhiteSpace(settings.DiscordDeafenChord))
+                settings.DiscordDeafenChord = "Ctrl+Shift+D";
+            settings.SchemaVersion = 2;
+        }
     }
 
     public static void MigrateProfile(ControllerProfile profile)
@@ -159,5 +177,16 @@ public static class SchemaMigrator
 
         if (profile.Buttons.Count == 0)
             profile.Buttons = ControllerProfile.CreateDefaultButtons();
+
+        if (profile.SchemaVersion < 2)
+        {
+            foreach (var fader in profile.Faders)
+            {
+                if (fader.Target.Kind == FaderTargetKind.MasterVolume)
+                    fader.SyncMode = SyncMode.Absolute;
+            }
+
+            profile.SchemaVersion = 2;
+        }
     }
 }

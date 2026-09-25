@@ -27,20 +27,21 @@ public static class DaemonStatusParser
 
     public static IReadOnlyList<HardwareDeviceInfo> ParseDevices(JsonNode status)
     {
-        var mixers = status["mixers"]?.AsObject();
-        if (mixers is null) return Array.Empty<HardwareDeviceInfo>();
+        if (status["mixers"] is not JsonObject mixers)
+            return Array.Empty<HardwareDeviceInfo>();
 
         var list = new List<HardwareDeviceInfo>();
         var version = GetDaemonVersion(status);
         foreach (var (serial, mixer) in mixers)
         {
-            if (mixer is null) continue;
-            var hw = mixer["hardware"];
+            if (mixer is not JsonObject mixerObj) continue;
+            var hw = mixerObj["hardware"] as JsonObject;
+            var usb = hw?["usb_device"] as JsonObject;
             list.Add(new HardwareDeviceInfo(
                 serial,
                 hw?["device_type"]?.GetValue<string>() ?? "Unknown",
-                hw?["usb_device"]?["product_name"]?.GetValue<string>() ?? "GoXLR",
-                mixer["profile_name"]?.GetValue<string>(),
+                usb?["product_name"]?.GetValue<string>() ?? "GoXLR",
+                mixerObj["profile_name"]?.GetValue<string>(),
                 version));
         }
 
@@ -49,14 +50,15 @@ public static class DaemonStatusParser
 
     public static IEnumerable<FaderSnapshot> ParseFaders(JsonNode status, string serial)
     {
-        var mixer = status["mixers"]?[serial];
-        if (mixer is null) yield break;
+        if (status["mixers"]?[serial] is not JsonObject mixer) yield break;
 
         foreach (var fader in FaderNames)
         {
-            var channel = mixer["fader_status"]?[fader]?["channel"]?.GetValue<string>();
+            var faderStatus = mixer["fader_status"] as JsonObject;
+            var channel = (faderStatus?[fader] as JsonObject)?["channel"]?.GetValue<string>();
             if (string.IsNullOrWhiteSpace(channel)) continue;
-            var raw = mixer["levels"]?["volumes"]?[channel]?.GetValue<byte>() ?? (byte)0;
+            var volumes = (mixer["levels"] as JsonObject)?["volumes"] as JsonObject;
+            var raw = volumes?[channel]?.GetValue<byte>() ?? (byte)0;
             yield return new FaderSnapshot(
                 Enum.Parse<FaderId>(fader),
                 channel,
@@ -67,8 +69,8 @@ public static class DaemonStatusParser
 
     public static IEnumerable<ButtonSnapshot> ParseButtons(JsonNode status, string serial)
     {
-        var buttonDown = status["mixers"]?[serial]?["button_down"];
-        if (buttonDown is null) yield break;
+        if (status["mixers"]?[serial]?["button_down"] is not JsonObject buttonDown)
+            yield break;
 
         foreach (var name in MiniButtons)
         {

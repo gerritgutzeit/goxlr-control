@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="clr-namespace:GoXlrControl.App.ViewModels"
         Title="GoXLR Control Studio"
+        Icon="pack://application:,,,/Assets/app.ico"
         Height="780" Width="1180"
         MinHeight="640" MinWidth="960"
         Background="{StaticResource BgBrush}"
@@ -59,6 +60,21 @@
               </TextBlock.Style>
             </TextBlock>
           </Border>
+          <Button Content="Update" Command="{Binding ApplyUpdateCommand}" Margin="0,0,8,0"
+                  ToolTip="{Binding StatusMessage}">
+            <Button.Style>
+              <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                <Setter Property="Visibility" Value="Collapsed"/>
+                <Setter Property="Background" Value="#1A4F4A"/>
+                <Setter Property="BorderBrush" Value="#2EC4B6"/>
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding ShowUpdateButton}" Value="True">
+                    <Setter Property="Visibility" Value="Visible"/>
+                  </DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </Button.Style>
+          </Button>
           <Button Content="Pause" Command="{Binding TogglePauseCommand}" Margin="0,0,8,0"/>
           <Button Content="Utility Patcher" Command="{Binding PatchUtilityCommand}" Margin="0">
             <Button.Style>
@@ -216,6 +232,21 @@
                                      FontWeight="SemiBold" Margin="0,2,0,0"/>
                           <TextBlock Text="{Binding TargetSummary}" Foreground="{StaticResource MutedTextBrush}"
                                      TextWrapping="Wrap" FontSize="12" Margin="0,4,0,0"/>
+                          <TextBlock Text="{Binding SyncMode, StringFormat=Sync: {0}}" FontSize="11"
+                                     Foreground="{StaticResource MutedTextBrush}" Margin="0,4,0,0"/>
+                          <TextBlock Text="Soft-Takeover: Fader an SW-Lautstärke ziehen"
+                                     FontSize="11" Foreground="{StaticResource WarnBrush}" TextWrapping="Wrap" Margin="0,4,0,0">
+                            <TextBlock.Style>
+                              <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                  <DataTrigger Binding="{Binding SoftTakeoverPending}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                  </DataTrigger>
+                                </Style.Triggers>
+                              </Style>
+                            </TextBlock.Style>
+                          </TextBlock>
                         </StackPanel>
                         <StackPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
                           <TextBlock FontFamily="Consolas" FontSize="11"
@@ -246,56 +277,190 @@
           <!-- Faders -->
           <Grid Visibility="{Binding SelectedPage, Converter={StaticResource PageVis}, ConverterParameter=Faders}">
             <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="200"/>
+              <ColumnDefinition Width="300"/>
               <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
             <DockPanel Margin="0,0,16,0">
-              <TextBlock DockPanel.Dock="Top" Text="Fader" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,12"/>
-              <ListBox ItemsSource="{Binding Faders}" SelectedItem="{Binding SelectedFader}" DisplayMemberPath="Id"/>
+              <StackPanel DockPanel.Dock="Top" Margin="0,0,0,12">
+                <TextBlock Text="Hardware-Fader" FontSize="22" FontWeight="SemiBold"/>
+                <TextBlock Text="Wähle einen Fader — rechts siehst du, was er steuert."
+                           Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,6,0,0" FontSize="12"/>
+              </StackPanel>
+              <ListBox ItemsSource="{Binding Faders}" SelectedItem="{Binding SelectedFader}">
+                <ListBox.ItemTemplate>
+                  <DataTemplate DataType="{x:Type vm:FaderVm}">
+                    <StackPanel Margin="0,4">
+                      <TextBlock Text="{Binding HardwareLabel}" FontWeight="SemiBold" FontSize="14"/>
+                      <TextBlock Text="{Binding TargetTitle}" Foreground="{StaticResource AccentBrush}" FontSize="12"/>
+                      <TextBlock Text="{Binding HardwareHint}" Foreground="{StaticResource MutedTextBrush}"
+                                 FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                    </StackPanel>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
             </DockPanel>
             <Border Grid.Column="1" Style="{StaticResource CardBorder}">
-              <StackPanel>
-                <TextBlock Text="Zuordnung" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8"/>
-                <TextBlock Text="{Binding SelectedFader.TargetSummary}"
-                           Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,16"/>
-                <Button Content="Als Master Volume" Command="{Binding SetFaderTargetMasterCommand}"
-                        HorizontalAlignment="Left" Margin="0,0,0,20"/>
-                <TextBlock Text="Laufende Audio-Sessions" FontWeight="SemiBold" Margin="0,0,0,8"/>
-                <Button Content="Sessions aktualisieren" Command="{Binding RefreshSessionsCommand}"
-                        HorizontalAlignment="Left" Margin="0,0,0,10"/>
-                <ListBox ItemsSource="{Binding Sessions}" SelectedItem="{Binding SelectedSession}"
-                         Height="260" DisplayMemberPath="DisplayName"/>
-                <Button Content="Session dem Fader zuweisen" Command="{Binding AssignSelectedSessionToFaderCommand}"
-                        HorizontalAlignment="Left" Margin="0,14,0,0"/>
-              </StackPanel>
+              <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                  <TextBlock Text="{Binding SelectedFader.HardwareLabel, FallbackValue=Fader}"
+                             FontSize="20" FontWeight="SemiBold"/>
+                  <TextBlock Text="{Binding SelectedFader.HardwareHint}"
+                             Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,14"/>
+
+                  <Border Background="#141A22" BorderBrush="{StaticResource BorderBrushKey}" BorderThickness="1"
+                          CornerRadius="6" Padding="12" Margin="0,0,0,16">
+                    <StackPanel>
+                      <TextBlock Text="Aktuelle Zuordnung" FontSize="11" FontWeight="SemiBold"
+                                 Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,6"/>
+                      <TextBlock Text="{Binding SelectedFader.TargetTitle}" FontSize="16" FontWeight="SemiBold"
+                                 Foreground="{StaticResource AccentBrush}"/>
+                      <TextBlock Text="{Binding SelectedFader.TargetDetail}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                      <TextBlock Text="Soft-Takeover: Fader an die aktuelle Windows-Lautstärke ziehen, bis er greift."
+                                 Foreground="{StaticResource WarnBrush}" TextWrapping="Wrap" Margin="0,8,0,0" FontSize="12">
+                        <TextBlock.Style>
+                          <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                            <Style.Triggers>
+                              <DataTrigger Binding="{Binding SelectedFader.SoftTakeoverPending}" Value="True">
+                                <Setter Property="Visibility" Value="Visible"/>
+                              </DataTrigger>
+                            </Style.Triggers>
+                          </Style>
+                        </TextBlock.Style>
+                      </TextBlock>
+                    </StackPanel>
+                  </Border>
+
+                  <TextBlock Text="Ziel zuweisen" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                  <WrapPanel>
+                    <Button Content="Master Volume" Command="{Binding SetFaderTargetMasterCommand}"
+                            Margin="0,0,8,8"
+                            ToolTip="Windows-Master-Wiedergabelautstärke steuern."/>
+                    <Button Content="Keine Zuweisung" Command="{Binding ClearFaderTargetCommand}"
+                            Margin="0,0,8,8"
+                            ToolTip="Fader steuert nichts in Control Studio."/>
+                  </WrapPanel>
+
+                  <TextBlock Text="Sync-Modus" FontSize="14" FontWeight="SemiBold" Margin="0,8,0,8"/>
+                  <WrapPanel>
+                    <Button Content="Absolute" Command="{Binding SetFaderSyncModeCommand}"
+                            CommandParameter="Absolute" Margin="0,0,8,8"
+                            ToolTip="Fader setzt die Windows-Lautstärke sofort."/>
+                    <Button Content="Soft-Takeover" Command="{Binding SetFaderSyncModeCommand}"
+                            CommandParameter="SoftTakeover" Margin="0,0,8,8"
+                            ToolTip="Greift erst, wenn der Fader die aktuelle Windows-Position kreuzt."/>
+                  </WrapPanel>
+                  <TextBlock Text="Absolute = Fader setzt Windows-Lautstärke sofort. Soft-Takeover = erst wenn Fader die aktuelle Windows-Position kreuzt (kein Sprung)."
+                             Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,16" FontSize="12"/>
+
+                  <Border Height="1" Background="{StaticResource BorderBrushKey}" Margin="0,0,0,14"/>
+
+                  <TextBlock Text="Laufende Audio-Sessions" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                  <TextBlock Text="Wähle eine Session und weise sie dem ausgewählten Fader zu."
+                             Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,10" FontSize="12"/>
+                  <Button Content="Sessions aktualisieren" Command="{Binding RefreshSessionsCommand}"
+                          HorizontalAlignment="Left" Margin="0,0,0,10"/>
+                  <ListBox ItemsSource="{Binding Sessions}" SelectedItem="{Binding SelectedSession}"
+                           Height="220" DisplayMemberPath="DisplayName"/>
+                  <Button Content="Session dem Fader zuweisen" Command="{Binding AssignSelectedSessionToFaderCommand}"
+                          HorizontalAlignment="Left" Margin="0,14,0,0"/>
+                </StackPanel>
+              </ScrollViewer>
             </Border>
           </Grid>
 
           <!-- Buttons -->
           <Grid Visibility="{Binding SelectedPage, Converter={StaticResource PageVis}, ConverterParameter=Buttons}">
             <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="240"/>
+              <ColumnDefinition Width="300"/>
               <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
             <DockPanel Margin="0,0,16,0">
-              <TextBlock DockPanel.Dock="Top" Text="Buttons" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,12"/>
-              <ListBox ItemsSource="{Binding Buttons}" SelectedItem="{Binding SelectedButton}" DisplayMemberPath="ButtonId"/>
+              <StackPanel DockPanel.Dock="Top" Margin="0,0,0,12">
+                <TextBlock Text="Hardware-Tasten" FontSize="22" FontWeight="SemiBold"/>
+                <TextBlock Text="Wähle eine Taste am Mini — rechts siehst du, was sie steuert."
+                           Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,6,0,0" FontSize="12"/>
+              </StackPanel>
+              <ListBox ItemsSource="{Binding Buttons}" SelectedItem="{Binding SelectedButton}">
+                <ListBox.ItemTemplate>
+                  <DataTemplate DataType="{x:Type vm:ButtonVm}">
+                    <StackPanel Margin="0,4">
+                      <TextBlock Text="{Binding HardwareLabel}" FontWeight="SemiBold" FontSize="14"/>
+                      <TextBlock Text="{Binding ActionTitle}" Foreground="{StaticResource AccentBrush}" FontSize="12"/>
+                      <TextBlock Text="{Binding HardwareHint}" Foreground="{StaticResource MutedTextBrush}"
+                                 FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                    </StackPanel>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
             </DockPanel>
             <Border Grid.Column="1" Style="{StaticResource CardBorder}">
-              <StackPanel>
-                <TextBlock Text="Aktion bei Press" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,14"/>
-                <WrapPanel>
-                  <Button Content="Master Mute" Command="{Binding SaveButtonActionCommand}" CommandParameter="ToggleMasterMute" Margin="0,0,8,8"/>
-                  <Button Content="Media Play/Pause" Command="{Binding SaveButtonActionCommand}" CommandParameter="MediaPlayPause" Margin="0,0,8,8"/>
-                  <Button Content="Media Next" Command="{Binding SaveButtonActionCommand}" CommandParameter="MediaNext" Margin="0,0,8,8"/>
-                  <Button Content="Media Prev" Command="{Binding SaveButtonActionCommand}" CommandParameter="MediaPrevious" Margin="0,0,8,8"/>
-                  <Button Content="Discord Mute" Command="{Binding SaveButtonActionCommand}" CommandParameter="DiscordMute" Margin="0,0,8,8"/>
-                  <Button Content="Discord Deafen" Command="{Binding SaveButtonActionCommand}" CommandParameter="DiscordDeafen" Margin="0,0,8,8"/>
-                  <Button Content="Keine" Command="{Binding SaveButtonActionCommand}" CommandParameter="None" Margin="0,0,8,8"/>
-                </WrapPanel>
-                <TextBlock Margin="0,12,0,0" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"
-                           Text="Discord-Aktionen senden nur konfigurierte Shortcuts (Command sent). In Discord unter Keybinds dieselben Combos setzen."/>
-              </StackPanel>
+              <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                  <TextBlock Text="{Binding SelectedButton.HardwareLabel, FallbackValue=Taste}"
+                             FontSize="20" FontWeight="SemiBold"/>
+                  <TextBlock Text="{Binding SelectedButton.HardwareHint}"
+                             Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,14"/>
+
+                  <Border Background="#141A22" BorderBrush="{StaticResource BorderBrushKey}" BorderThickness="1"
+                          CornerRadius="6" Padding="12" Margin="0,0,0,16">
+                    <StackPanel>
+                      <TextBlock Text="Aktuelle Aktion" FontSize="11" FontWeight="SemiBold"
+                                 Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,6"/>
+                      <TextBlock Text="{Binding SelectedButton.ActionTitle}" FontSize="16" FontWeight="SemiBold"
+                                 Foreground="{StaticResource AccentBrush}"/>
+                      <TextBlock Text="{Binding SelectedButton.ActionDetail}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                      <TextBlock Text="{Binding SelectedButton.LedHint}" TextWrapping="Wrap" Margin="0,8,0,0"
+                                 Foreground="{StaticResource MutedTextBrush}" FontSize="12"/>
+                    </StackPanel>
+                  </Border>
+
+                  <TextBlock Text="Aktion zuweisen" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                  <TextBlock Text="Wichtig: Windows Master-Mute ≠ Discord Mic-Mute."
+                             Foreground="{StaticResource WarnBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                  <WrapPanel>
+                    <Button Content="Windows Master-Mute" Command="{Binding SaveButtonActionCommand}"
+                            CommandParameter="ToggleMasterMute" Margin="0,0,8,8"
+                            ToolTip="Stummschaltung der Windows-Wiedergabe — nicht das Discord-Mikrofon."/>
+                    <Button Content="Discord Mic-Mute" Command="{Binding SaveButtonActionCommand}"
+                            CommandParameter="DiscordMute" Margin="0,0,8,8"
+                            ToolTip="Discord-Mikrofon (Shortcut-Toggle). Standard für Cough."/>
+                    <Button Content="Discord Deafen" Command="{Binding SaveButtonActionCommand}"
+                            CommandParameter="DiscordDeafen" Margin="0,0,8,8"
+                            ToolTip="Discord Headset aus (hört nichts / mutet Mic)."/>
+                    <Button Content="Media Play/Pause" Command="{Binding SaveButtonActionCommand}"
+                            CommandParameter="MediaPlayPause" Margin="0,0,8,8"/>
+                    <Button Content="Media Next" Command="{Binding SaveButtonActionCommand}"
+                            CommandParameter="MediaNext" Margin="0,0,8,8"/>
+                    <Button Content="Media Prev" Command="{Binding SaveButtonActionCommand}"
+                            CommandParameter="MediaPrevious" Margin="0,0,8,8"/>
+                    <Button Content="Keine Aktion" Command="{Binding SaveButtonActionCommand}"
+                            CommandParameter="None" Margin="0,0,8,8"/>
+                  </WrapPanel>
+
+                  <Border Height="1" Background="{StaticResource BorderBrushKey}" Margin="0,8,0,14"/>
+
+                  <TextBlock Text="Discord-Hilfe" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                  <Button Content="Discord Mic-Mute testen" Command="{Binding TestDiscordMuteCommand}"
+                          HorizontalAlignment="Left" Margin="0,0,0,10"/>
+                  <TextBlock Text="LED-Mirror (wenn du in Discord selbst mutest/deafst)"
+                             FontWeight="SemiBold" Margin="0,0,0,6"/>
+                  <WrapPanel>
+                    <Button Content="Mute an" Command="{Binding SyncDiscordMuteOnCommand}" Margin="0,0,8,8"/>
+                    <Button Content="Mute aus" Command="{Binding SyncDiscordMuteOffCommand}" Margin="0,0,8,8"/>
+                    <Button Content="Deafen an" Command="{Binding SyncDiscordDeafenOnCommand}" Margin="0,0,8,8"/>
+                    <Button Content="Deafen aus" Command="{Binding SyncDiscordDeafenOffCommand}" Margin="0,0,8,8"/>
+                  </WrapPanel>
+                  <TextBlock Margin="0,4,0,0" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" FontSize="12">
+                    <Run Text="Mirror:"/>
+                    <Run Text="{Binding DiscordMuteStatus, Mode=OneWay}" FontWeight="SemiBold"/>
+                    <Run Text="/"/>
+                    <Run Text="{Binding DiscordDeafenStatus, Mode=OneWay}" FontWeight="SemiBold"/>
+                    <Run Text=" · "/>
+                    <Run Text="{Binding DiscordReliability, Mode=OneWay}"/>
+                  </TextBlock>
+                </StackPanel>
+              </ScrollViewer>
             </Border>
           </Grid>
 
@@ -333,12 +498,47 @@
                 <CheckBox Content="Controller pausiert" IsChecked="{Binding ControllerPaused}" Margin="0,0,0,12"/>
                 <Button Content="Utility installieren / starten" Command="{Binding PatchUtilityCommand}"
                         HorizontalAlignment="Left" Margin="0,0,0,18"/>
-                <TextBlock Text="Discord Mute Chord (z.B. Ctrl+Shift+M)"
+                <TextBlock Text="Fader-LED Feedback" FontWeight="SemiBold" Margin="0,0,0,6"/>
+                <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,8"
+                           Text="Steuert die Fader-Farben am GoXLR (nicht Windows). Off = aus. Status = Türkis wenn zugeordnet, Rot wenn Ziel stumm, Amber bei Soft-Takeover. PeakProxy = Helligkeit folgt dem Windows-Audio-Peak (~10×/s) — kein echter Hardware-VU."/>
+                <ComboBox SelectedValue="{Binding SelectedLightingMode}" SelectedValuePath="Content" Margin="0,0,0,8">
+                  <ComboBoxItem Content="Off"/>
+                  <ComboBoxItem Content="Status"/>
+                  <ComboBoxItem Content="PeakProxy"/>
+                </ComboBox>
+                <CheckBox Content="Exklusive LED-Kontrolle (Utility-Animationen aus, Mute kann Farben nicht überschreiben)"
+                          IsChecked="{Binding ExclusiveLightingControl}" Margin="0,0,0,16"/>
+                <TextBlock Text="Discord-Integration" FontWeight="SemiBold" Margin="0,0,0,6"/>
+                <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,8"
+                           Text="Aktuell immer Fallback: App sendet den Chord per Tastatureingabe. In Discord unter Tastenkürzel denselben Chord für Mute/Deafen anlegen. Hybrid/Native brauchen Discord-API-Freigabe und sind noch Stub."/>
+                <ComboBox SelectedValue="{Binding DiscordIntegrationMode}" SelectedValuePath="Content" Margin="0,0,0,8">
+                  <ComboBoxItem Content="Fallback"/>
+                  <ComboBoxItem Content="Hybrid"/>
+                  <ComboBoxItem Content="Native"/>
+                </ComboBox>
+                <TextBlock Margin="0,0,0,12" Foreground="{StaticResource AccentBrush}">
+                  <Run Text="Effektiv aktiv:"/>
+                  <Run Text="{Binding DiscordEffectiveMode, Mode=OneWay}" FontWeight="SemiBold"/>
+                </TextBlock>
+                <TextBlock Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,6"
+                           Text="{Binding DiscordMuteStatus, StringFormat=Mute-State (nur bei API): {0}}"/>
+                <TextBlock Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,14"
+                           Text="{Binding DiscordReliability, StringFormat=Reliability: {0}}"/>
+                <TextBlock Text="Discord Mute Chord (z.B. Ctrl+Shift+M) — muss in Discord identisch sein"
                            Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,6"/>
                 <TextBox Text="{Binding DiscordMuteChord, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,14"/>
                 <TextBlock Text="Discord Deafen Chord"
                            Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,6"/>
-                <TextBox Text="{Binding DiscordDeafenChord, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,16"/>
+                <TextBox Text="{Binding DiscordDeafenChord, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,12"/>
+                <Button Content="Discord Mute testen" Command="{Binding TestDiscordMuteCommand}"
+                        HorizontalAlignment="Left" Margin="0,0,0,10"/>
+                <TextBlock Text="LED-Mirror (ohne Shortcut)" FontWeight="SemiBold" Margin="0,0,0,6"/>
+                <WrapPanel Margin="0,0,0,16">
+                  <Button Content="Mute an" Command="{Binding SyncDiscordMuteOnCommand}" Margin="0,0,8,8"/>
+                  <Button Content="Mute aus" Command="{Binding SyncDiscordMuteOffCommand}" Margin="0,0,8,8"/>
+                  <Button Content="Deafen an" Command="{Binding SyncDiscordDeafenOnCommand}" Margin="0,0,8,8"/>
+                  <Button Content="Deafen aus" Command="{Binding SyncDiscordDeafenOffCommand}" Margin="0,0,8,8"/>
+                </WrapPanel>
                 <Button Content="Speichern" Command="{Binding SaveSettingsCommand}" HorizontalAlignment="Left" Margin="0"/>
               </StackPanel>
             </Border>
@@ -348,12 +548,35 @@
           <Grid Visibility="{Binding SelectedPage, Converter={StaticResource PageVis}, ConverterParameter=Diagnostics}">
             <Grid.RowDefinitions>
               <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
               <RowDefinition Height="*"/>
               <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
             <TextBlock Text="Diagnostics" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,12"/>
-            <ListBox Grid.Row="1" ItemsSource="{Binding LogLines}" FontFamily="Consolas" FontSize="12"/>
-            <Button Grid.Row="2" Content="Diagnosebericht exportieren" Command="{Binding ExportDiagnosticsCommand}"
+            <Border Grid.Row="1" Style="{StaticResource CardBorder}" Margin="0,0,0,12" Padding="12">
+              <StackPanel>
+                <TextBlock Text="Lighting" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                <TextBlock Text="{Binding LightingDiagnostics}" FontFamily="Consolas" FontSize="12"
+                           Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,12"/>
+                <TextBlock Text="Discord" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                <TextBlock FontFamily="Consolas" FontSize="12" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap">
+                  <Run Text="Mode="/>
+                  <Run Text="{Binding DiscordIntegrationMode, Mode=OneWay}"/>
+                  <Run Text=" Conn="/>
+                  <Run Text="{Binding DiscordConnectionStatus, Mode=OneWay}"/>
+                  <Run Text=" Mute="/>
+                  <Run Text="{Binding DiscordMuteStatus, Mode=OneWay}"/>
+                  <Run Text=" Deafen="/>
+                  <Run Text="{Binding DiscordDeafenStatus, Mode=OneWay}"/>
+                  <Run Text=" Rel="/>
+                  <Run Text="{Binding DiscordReliability, Mode=OneWay}"/>
+                  <Run Text=" @"/>
+                  <Run Text="{Binding DiscordStatusTimestamp, Mode=OneWay}"/>
+                </TextBlock>
+              </StackPanel>
+            </Border>
+            <ListBox Grid.Row="2" ItemsSource="{Binding LogLines}" FontFamily="Consolas" FontSize="12"/>
+            <Button Grid.Row="3" Content="Diagnosebericht exportieren" Command="{Binding ExportDiagnosticsCommand}"
                     HorizontalAlignment="Left" Margin="0,14,0,0"/>
           </Grid>
         </Grid>

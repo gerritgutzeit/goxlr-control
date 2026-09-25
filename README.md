@@ -30,19 +30,26 @@ dotnet run --project src/GoXlrControl.App
 
 Simulation ohne Hardware: Settings → **Simulated Hardware** aktivieren und App neu starten. DiagHost fragt beim Start nach Simulation.
 
-## Publish
+## Publish / Release
+
+**Empfohlen (Auto-Update):** Version in der csproj bumpfen, Tag `vX.Y.Z` pushen — GitHub Actions baut Velopack-Setup und Release.
+
+Lokal:
 
 ```powershell
 .\packaging\publish.ps1
+.\packaging\velopack-pack.ps1
 ```
 
-Optional Installer: Inno Setup 6 mit `packaging/GoXlrControlStudio.iss`.
+Details: [`docs/planning/release-process.md`](docs/planning/release-process.md).
+
+Legacy ohne Updater: Inno Setup 6 mit `packaging/GoXlrControlStudio.iss`.
 
 ## Bekannte Einschränkungen
 
 - GoXLR Utility und offizielle GoXLR App schließen sich gegenseitig aus.
 - Fader liefern Channel-Volumen (0–255), keine Rohachsen.
-- Discord Mute/Deafen = Shortcut „Command sent“, kein bestätigter Discord-State.
+- Discord Mute/Deafen = `IDiscordIntegration` FALLBACK (Shortcut „Command sent“); bestätigter State nur nach Discord-Approval (HYBRID/NATIVE).
 - Physische Hardware-Validierung steht lokal noch aus, solange Utility nicht installiert ist (siehe `docs/testing/hardware-validation.md`).
 - Lighting / OBS / Auto-Profile-Switch sind Post-MVP.
 

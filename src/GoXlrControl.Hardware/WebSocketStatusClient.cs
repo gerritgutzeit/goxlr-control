@@ -15,6 +15,7 @@ public sealed class WebSocketStatusClient : IAsyncDisposable
     private Task? _receiveLoop;
     private uint _nextId = 1;
     private JsonNode? _status;
+    private int _disconnectSignaled;
 
     public JsonNode? Status => _status;
     public bool IsConnected => _socket?.State == WebSocketState.Open;
@@ -26,6 +27,7 @@ public sealed class WebSocketStatusClient : IAsyncDisposable
     public async Task ConnectAsync(Uri websocketUri, CancellationToken ct = default)
     {
         await DisposeSocketAsync().ConfigureAwait(false);
+        _disconnectSignaled = 0;
         _socket = new ClientWebSocket();
         await _socket.ConnectAsync(websocketUri, ct).ConfigureAwait(false);
         _receiveCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -83,7 +85,7 @@ public sealed class WebSocketStatusClient : IAsyncDisposable
                     result = await socket.ReceiveAsync(buffer, ct).ConfigureAwait(false);
                     if (result.MessageType == WebSocketMessageType.Close)
                     {
-                        Disconnected?.Invoke(this, EventArgs.Empty);
+                        SignalDisconnected();
                         return;
                     }
 
@@ -91,8 +93,20 @@ public sealed class WebSocketStatusClient : IAsyncDisposable
                 } while (!result.EndOfMessage);
 
                 var json = Encoding.UTF8.GetString(ms.ToArray());
-                HandleMessage(json);
+                try
+                {
+                    HandleMessage(json);
+                }
+                catch (Exception ex)
+                {
+                    // Message/patch errors must not tear down the socket — that caused a reconnect storm
+                    // when Utility replied with data: "Ok" (JsonValue) and code indexed ["Patch"] on it.
+                    MessageLogged?.Invoke(this, $"WebSocket message error: {ex.Message}");
+                }
             }
+
+            if (!ct.IsCancellationRequested)
+                SignalDisconnected();
         }
         catch (OperationCanceledException)
         {
@@ -101,8 +115,14 @@ public sealed class WebSocketStatusClient : IAsyncDisposable
         catch (Exception ex)
         {
             MessageLogged?.Invoke(this, $"WebSocket receive error: {ex.Message}");
-            Disconnected?.Invoke(this, EventArgs.Empty);
+            SignalDisconnected();
         }
+    }
+
+    private void SignalDisconnected()
+    {
+        if (Interlocked.Exchange(ref _disconnectSignaled, 1) != 0) return;
+        Disconnected?.Invoke(this, EventArgs.Empty);
     }
 
     private void HandleMessage(string json)
@@ -123,8 +143,9 @@ public sealed class WebSocketStatusClient : IAsyncDisposable
         if (node["id"] is JsonValue idValue && idValue.TryGetValue<uint>(out var id) &&
             node["data"] is JsonNode data)
         {
-            // Patch messages may arrive with id, but Utility typically sends patches as data.Patch
-            if (data["Patch"] is JsonArray patchArray)
+            // Utility command replies are often the string "Ok" (JsonValue), not an object.
+            // Indexing ["Patch"] on a JsonValue throws InvalidOperationException.
+            if (data is JsonObject dataObj && dataObj["Patch"] is JsonArray patchArray)
             {
                 ApplyPatch(patchArray);
                 return;
@@ -135,8 +156,7 @@ public sealed class WebSocketStatusClient : IAsyncDisposable
             return;
         }
 
-        // Some servers may emit bare Patch objects
-        if (node["data"]?["Patch"] is JsonArray barePatch)
+        if (node["data"] is JsonObject bareObj && bareObj["Patch"] is JsonArray barePatch)
             ApplyPatch(barePatch);
     }
 

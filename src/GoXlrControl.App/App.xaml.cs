@@ -11,6 +11,7 @@ using GoXlrControl.Hardware.Abstractions;
 using GoXlrControl.Integrations;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Velopack;
 
 namespace GoXlrControl.App;
 
@@ -19,7 +20,18 @@ public partial class App : Application
     private static Mutex? _mutex;
     private IHost? _host;
 
-    protected override async void OnStartup(StartupEventArgs e)
+    [STAThread]
+    private static void Main(string[] args)
+    {
+        // Must run before WPF startup so Velopack can handle update hooks with minimal overhead.
+        VelopackApp.Build().Run();
+
+        var app = new App();
+        app.InitializeComponent();
+        app.Run();
+    }
+
+    protected override void OnStartup(StartupEventArgs e)
     {
         _mutex = new Mutex(true, @"Local\GoXlrControlStudio", out var created);
         if (!created)
@@ -31,32 +43,58 @@ public partial class App : Application
         }
 
         base.OnStartup(e);
+        _ = StartAppAsync();
+    }
 
-        _host = Host.CreateDefaultBuilder()
-            .ConfigureServices(ConfigureServices)
-            .Build();
-
-        await _host.StartAsync();
-
-        var bootstrap = _host.Services.GetRequiredService<AppBootstrapper>();
-        await bootstrap.InitializeAsync();
-
-        var main = _host.Services.GetRequiredService<MainWindow>();
-        MainWindow = main;
-
-        // Owner darf erst gesetzt werden, nachdem das Hauptfenster einmal angezeigt wurde.
-        main.Show();
-
-        var settings = bootstrap.Settings;
-        if (!settings.WizardCompleted)
+    private async Task StartAppAsync()
+    {
+        try
         {
-            var wizard = _host.Services.GetRequiredService<WizardWindow>();
-            wizard.Owner = main;
-            wizard.ShowDialog();
-        }
+            _host = Host.CreateDefaultBuilder()
+                .ConfigureServices(ConfigureServices)
+                .Build();
 
-        if (settings.StartMinimized)
-            main.Hide();
+            await _host.StartAsync().ConfigureAwait(false);
+
+            var bootstrap = _host.Services.GetRequiredService<AppBootstrapper>();
+            await bootstrap.InitializeAsync().ConfigureAwait(false);
+
+            await Dispatcher.InvokeAsync(() =>
+            {
+                bootstrap.InitializeTray();
+
+                var main = _host!.Services.GetRequiredService<MainWindow>();
+                MainWindow = main;
+                main.Show();
+                main.Activate();
+
+                var settings = bootstrap.Settings;
+                if (!settings.WizardCompleted)
+                {
+                    var wizard = _host.Services.GetRequiredService<WizardWindow>();
+                    wizard.Owner = main;
+                    wizard.ShowDialog();
+                }
+
+                if (settings.StartMinimized)
+                    main.Hide();
+            });
+
+            var updates = _host.Services.GetRequiredService<UpdateService>();
+            _ = updates.CheckForUpdatesAsync();
+        }
+        catch (Exception ex)
+        {
+            await Dispatcher.InvokeAsync(() =>
+            {
+                MessageBox.Show(
+                    $"Start fehlgeschlagen:\n\n{ex}",
+                    "GoXLR Control Studio",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                Shutdown();
+            });
+        }
     }
 
     private static void ConfigureServices(HostBuilderContext _, IServiceCollection services)
@@ -72,7 +110,30 @@ public partial class App : Application
         services.AddSingleton<TrayService>();
         services.AddSingleton(typeof(Lazy<>), typeof(LazyService<>));
 
+        services.AddSingleton<IDiscordIntegration>(sp =>
+        {
+            var settingsStore = sp.GetRequiredService<SettingsStore>();
+            var shortcuts = sp.GetRequiredService<SendInputShortcutService>();
+            // Lazy: AppBootstrapper depends on IDiscordIntegration — avoid circular resolve at ctor time.
+            var lazyBootstrap = new Lazy<AppBootstrapper>(sp.GetRequiredService<AppBootstrapper>);
+            return DiscordIntegrationFactory.Create(
+                () =>
+                {
+                    // Create() reads settings immediately — must NOT resolve AppBootstrapper here
+                    // or DI deadlocks (IDiscordIntegration ↔ AppBootstrapper).
+                    if (lazyBootstrap.IsValueCreated)
+                        return lazyBootstrap.Value.Settings;
+                    return settingsStore.Load();
+                },
+                shortcuts);
+        });
+
         services.AddSingleton<UtilityPatcher>();
+        services.AddSingleton(sp =>
+        {
+            var log = sp.GetRequiredService<DiagnosticLog>();
+            return new UpdateService(msg => log.Info(msg));
+        });
         services.AddSingleton<IHardwareInputProvider>(sp =>
         {
             var settings = sp.GetRequiredService<SettingsStore>().Load();
@@ -80,6 +141,8 @@ public partial class App : Application
                 ? new SimulatedHardwareProvider()
                 : new GoXlrUtilityProvider(autoStartDaemon: settings.AutoStartUtilityDaemon);
         });
+        services.AddSingleton<IHardwareOutputController>(sp =>
+            (IHardwareOutputController)sp.GetRequiredService<IHardwareInputProvider>());
 
         services.AddSingleton<AppBootstrapper>();
 
@@ -89,7 +152,7 @@ public partial class App : Application
             var shortcuts = sp.GetRequiredService<SendInputShortcutService>();
             var media = sp.GetRequiredService<MediaKeyService>();
             var launch = sp.GetRequiredService<ProcessLaunchService>();
-            var settingsStore = sp.GetRequiredService<SettingsStore>();
+            var discord = sp.GetRequiredService<IDiscordIntegration>();
             var lazyBootstrap = new Lazy<AppBootstrapper>(sp.GetRequiredService<AppBootstrapper>);
 
             return new ActionDispatcher(
@@ -98,8 +161,8 @@ public partial class App : Application
                 new EndpointMuteActionExecutor(volume),
                 new ApplicationMuteActionExecutor(volume),
                 new ShortcutActionExecutor(shortcuts),
-                new DiscordMuteActionExecutor(shortcuts, () => settingsStore.Load().DiscordMuteChord),
-                new DiscordDeafenActionExecutor(shortcuts, () => settingsStore.Load().DiscordDeafenChord),
+                new DiscordMuteActionExecutor(discord),
+                new DiscordDeafenActionExecutor(discord),
                 new MediaPlayPauseExecutor(media),
                 new MediaNextExecutor(media),
                 new MediaPreviousExecutor(media),
@@ -109,6 +172,20 @@ public partial class App : Application
         });
 
         services.AddSingleton<ControllerEngine>();
+        services.AddSingleton<LightingFeedbackService>(sp =>
+        {
+            var settingsStore = sp.GetRequiredService<SettingsStore>();
+            var lazyBootstrap = new Lazy<AppBootstrapper>(sp.GetRequiredService<AppBootstrapper>);
+            return new LightingFeedbackService(
+                sp.GetRequiredService<IHardwareInputProvider>(),
+                sp.GetRequiredService<IHardwareOutputController>(),
+                sp.GetRequiredService<ControllerEngine>(),
+                sp.GetRequiredService<IVolumeSink>(),
+                sp.GetRequiredService<IDiscordIntegration>(),
+                () => lazyBootstrap.IsValueCreated
+                    ? lazyBootstrap.Value.Settings
+                    : settingsStore.Load());
+        });
         services.AddSingleton<MainViewModel>();
         services.AddSingleton<MainWindow>();
         services.AddTransient<WizardWindow>();

@@ -1,15 +1,17 @@
+using System.Diagnostics;
 using System.Text.Json.Nodes;
 using GoXlrControl.Hardware.Abstractions;
 using Microsoft.Extensions.Logging;
 
 namespace GoXlrControl.Hardware;
 
-public sealed class GoXlrUtilityProvider : IHardwareInputProvider
+public sealed class GoXlrUtilityProvider : IHardwareInputProvider, IHardwareOutputController
 {
     private readonly ILogger<GoXlrUtilityProvider>? _logger;
     private readonly bool _autoStartDaemon;
     private readonly Dictionary<(string Serial, FaderId Fader), FaderSnapshot> _lastFaders = new();
     private readonly Dictionary<(string Serial, HardwareButtonId Button), bool> _lastButtons = new();
+    private readonly SemaphoreSlim _commandGate = new(1, 1);
     private CancellationTokenSource? _runCts;
     private Task? _runTask;
     private WebSocketStatusClient? _ws;
@@ -24,6 +26,10 @@ public sealed class GoXlrUtilityProvider : IHardwareInputProvider
 
     public HardwareConnectionState ConnectionState { get; private set; } = HardwareConnectionState.Disconnected;
     public IReadOnlyList<HardwareDeviceInfo> Devices => _devices;
+    public bool CanSendCommands =>
+        ConnectionState is HardwareConnectionState.Connected or HardwareConnectionState.HttpDisabled
+        && !string.IsNullOrEmpty(ActiveSerial);
+    public string? ActiveSerial => _devices.FirstOrDefault()?.SerialNumber;
 
     public event EventHandler<HardwareConnectionState>? ConnectionChanged;
     public event EventHandler<FaderValueChanged>? FaderChanged;
@@ -227,6 +233,79 @@ public sealed class GoXlrUtilityProvider : IHardwareInputProvider
     {
         _logger?.LogInformation("{Message}", message);
         DiagnosticMessage?.Invoke(this, message);
+    }
+
+    public Task SetFaderDisplayStyleAsync(FaderId fader, FaderDisplayStyle style, CancellationToken ct = default)
+    {
+        var serial = RequireSerial();
+        return SendCommandAsync(GoXlrCommandBuilder.SetFaderDisplayStyle(serial, fader, style), ct);
+    }
+
+    public Task SetFaderColoursAsync(FaderId fader, string colourOneHex, string colourTwoHex, CancellationToken ct = default)
+    {
+        var serial = RequireSerial();
+        return SendCommandAsync(GoXlrCommandBuilder.SetFaderColours(serial, fader, colourOneHex, colourTwoHex), ct);
+    }
+
+    public Task SetAllFaderColoursAsync(string colourOneHex, string colourTwoHex, CancellationToken ct = default)
+    {
+        var serial = RequireSerial();
+        return SendCommandAsync(GoXlrCommandBuilder.SetAllFaderColours(serial, colourOneHex, colourTwoHex), ct);
+    }
+
+    public Task SetButtonColoursAsync(HardwareButtonId button, string colourOneHex, string colourTwoHex, CancellationToken ct = default)
+    {
+        var serial = RequireSerial();
+        return SendCommandAsync(GoXlrCommandBuilder.SetButtonColours(serial, button, colourOneHex, colourTwoHex), ct);
+    }
+
+    public Task SetButtonOffStyleAsync(HardwareButtonId button, LightingOffStyle style, CancellationToken ct = default)
+    {
+        var serial = RequireSerial();
+        return SendCommandAsync(GoXlrCommandBuilder.SetButtonOffStyle(serial, button, style), ct);
+    }
+
+    public Task SetAnimationModeAsync(AnimationMode mode, CancellationToken ct = default)
+    {
+        var serial = RequireSerial();
+        return SendCommandAsync(GoXlrCommandBuilder.SetAnimationMode(serial, mode), ct);
+    }
+
+    private string RequireSerial() =>
+        ActiveSerial ?? throw new InvalidOperationException("Kein GoXLR-Gerät verbunden.");
+
+    private async Task SendCommandAsync(JsonNode command, CancellationToken ct)
+    {
+        if (!CanSendCommands)
+            throw new InvalidOperationException($"Commands nicht möglich im Zustand {ConnectionState}.");
+
+        await _commandGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var ws = _ws;
+            if (ws is { IsConnected: true })
+            {
+                var response = await ws.SendRequestAsync(command, ct).ConfigureAwait(false);
+                ThrowIfError(response);
+                return;
+            }
+
+            await using var pipe = new NamedPipeTransport();
+            await pipe.ConnectAsync(ct: ct).ConfigureAwait(false);
+            var pipeResponse = await pipe.SendAsync(command, ct).ConfigureAwait(false);
+            ThrowIfError(pipeResponse);
+        }
+        finally
+        {
+            _commandGate.Release();
+        }
+    }
+
+    private static void ThrowIfError(JsonNode response)
+    {
+        // Utility often returns the bare string "Ok" (JsonValue) — do not index it as an object.
+        if (response is JsonObject obj && obj["Error"] is JsonNode err)
+            throw new InvalidOperationException(err.ToJsonString());
     }
 
     public async ValueTask DisposeAsync() => await StopAsync().ConfigureAwait(false);

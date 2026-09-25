@@ -14,6 +14,7 @@ public sealed class ControllerEngine : IAsyncDisposable
     private readonly ConcurrentDictionary<FaderId, SoftTakeoverTracker> _takeovers = new();
     private readonly ConcurrentDictionary<FaderId, double> _lastHardware = new();
     private readonly ConcurrentDictionary<FaderId, double> _lastTarget = new();
+    private readonly ConcurrentDictionary<FaderId, bool> _softTakeoverWarned = new();
     private readonly ButtonDebouncer _debouncer = new();
     private readonly ConcurrentDictionary<HardwareButtonId, DateTimeOffset> _pressStarted = new();
     private readonly object _gate = new();
@@ -34,6 +35,7 @@ public sealed class ControllerEngine : IAsyncDisposable
     }
 
     public event EventHandler<FaderId>? FaderOutputChanged;
+    public event EventHandler<FaderId>? SoftTakeoverPendingChanged;
     public event EventHandler<string>? DiagnosticMessage;
     public event EventHandler? ProfileChanged;
 
@@ -51,6 +53,16 @@ public sealed class ControllerEngine : IAsyncDisposable
     public IReadOnlyDictionary<FaderId, double> LastHardwareValues => _lastHardware;
     public IReadOnlyDictionary<FaderId, double> LastTargetValues => _lastTarget;
 
+    public bool IsSoftTakeoverEngaged(FaderId fader) =>
+        _takeovers.TryGetValue(fader, out var t) && t.Engaged;
+
+    public bool HasSoftTakeoverPending(FaderId fader)
+    {
+        if (!_takeovers.TryGetValue(fader, out var t))
+            return false;
+        return !t.Engaged;
+    }
+
     public void SetProfile(ControllerProfile profile)
     {
         lock (_gate)
@@ -59,6 +71,7 @@ public sealed class ControllerEngine : IAsyncDisposable
             foreach (var tracker in _takeovers.Values)
                 tracker.Reset();
             _takeovers.Clear();
+            _softTakeoverWarned.Clear();
         }
 
         ProfileChanged?.Invoke(this, EventArgs.Empty);
@@ -109,12 +122,22 @@ public sealed class ControllerEngine : IAsyncDisposable
             {
                 _lastHardware[e.Fader] = e.NormalizedValue;
                 _lastTarget[e.Fader] = currentTarget;
+                if (!_softTakeoverWarned.ContainsKey(e.Fader))
+                {
+                    _softTakeoverWarned[e.Fader] = true;
+                    DiagnosticMessage?.Invoke(this,
+                        $"Soft-Takeover Fader {e.Fader}: Fader an Windows-Lautstärke ({currentTarget:P0}) vorbeiziehen, oder Sync-Modus → Absolute.");
+                }
+
+                SoftTakeoverPendingChanged?.Invoke(this, e.Fader);
                 return;
             }
 
+            _softTakeoverWarned.TryRemove(e.Fader, out _);
             await ApplyVolumeAsync(binding, mapped).ConfigureAwait(false);
             _lastHardware[e.Fader] = e.NormalizedValue;
             _lastTarget[e.Fader] = mapped;
+            SoftTakeoverPendingChanged?.Invoke(this, e.Fader);
             FaderOutputChanged?.Invoke(this, e.Fader);
         }
         catch (Exception ex)

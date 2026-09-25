@@ -1,7 +1,8 @@
-; GoXLR Control Studio — Inno Setup script
+; GoXLR Control Studio — Inno Setup script (LEGACY — ohne Auto-Update)
+; Primärweg: Velopack via packaging/velopack-pack.ps1 bzw. .github/workflows/release.yml
 ; Requires Inno Setup 6+: https://jrsoftware.org/isinfo.php
 ; Build publish output first:
-;   dotnet publish src/GoXlrControl.App/GoXlrControl.App.csproj -c Release -r win-x64 --self-contained true -o artifacts/app
+;   .\packaging\publish.ps1
 
 #define MyAppName "GoXLR Control Studio"
 #define MyAppVersion "0.1.0"
@@ -24,6 +25,8 @@ WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest
 InfoBeforeFile=INSTALL_NOTES.txt
+SetupIconFile=..\src\GoXlrControl.App\Assets\app.ico
+UninstallDisplayIcon={app}\{#MyAppExeName}
 
 [Languages]
 Name: "german"; MessagesFile: "compiler:Languages\German.isl"

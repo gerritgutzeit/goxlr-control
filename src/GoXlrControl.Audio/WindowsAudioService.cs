@@ -177,6 +177,50 @@ public sealed class WindowsAudioService : IVolumeSink, IDisposable
         return Task.FromResult(session is null ? (double?)null : session.SimpleAudioVolume.Volume);
     }
 
+    public Task<bool> GetMasterMuteAsync(CancellationToken ct = default)
+    {
+        var device = ResolveDevice();
+        return Task.FromResult(device.AudioEndpointVolume.Mute);
+    }
+
+    public Task<bool?> GetApplicationMuteAsync(AppIdentity identity, CancellationToken ct = default)
+    {
+        var session = MatchSessions(identity).FirstOrDefault();
+        return Task.FromResult(session is null ? (bool?)null : session.SimpleAudioVolume.Mute);
+    }
+
+    public Task<double> GetMasterPeakAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            var device = ResolveDevice();
+            return Task.FromResult(Math.Clamp((double)device.AudioMeterInformation.MasterPeakValue, 0, 1));
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogDebug(ex, "Endpoint peak failed");
+            return Task.FromResult(0.0);
+        }
+    }
+
+    public Task<double> GetApplicationPeakAsync(AppIdentity identity, CancellationToken ct = default)
+    {
+        double peak = 0;
+        foreach (var session in MatchSessions(identity))
+        {
+            try
+            {
+                peak = Math.Max(peak, session.AudioMeterInformation.MasterPeakValue);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogDebug(ex, "Session peak failed");
+            }
+        }
+
+        return Task.FromResult(Math.Clamp(peak, 0, 1));
+    }
+
     private IEnumerable<AudioSessionControl> MatchSessions(AppIdentity identity)
     {
         MMDevice device;

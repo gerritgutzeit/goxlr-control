@@ -1,0 +1,90 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Resolve version from tag
+        id: ver
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = $tag.TrimStart("v")
+          if ($version -notmatch '^\d+\.\d+\.\d+') {
+            throw "Tag must be vX.Y.Z (got $tag)"
+          }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Version: $version"
+
+      - name: Test
+        run: dotnet test GoXlrControl.sln -c Release --nologo
+
+      - name: Publish win-x64
+        shell: pwsh
+        run: |
+          dotnet publish src/GoXlrControl.App/GoXlrControl.App.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=false `
+            -p:Version=${{ steps.ver.outputs.version }} `
+            -p:RepositoryUrl=https://github.com/${{ github.repository }} `
+            -o publish
+
+      - name: Install vpk
+        run: dotnet tool install -g vpk --version 1.2.158
+
+      - name: Download previous releases (deltas)
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          vpk download github `
+            --repoUrl "https://github.com/${{ github.repository }}" `
+            --outputDir releases `
+            --token $env:GITHUB_TOKEN
+
+      - name: Pack Velopack
+        shell: pwsh
+        run: |
+          vpk pack `
+            --packId GoXlrControlStudio `
+            --packVersion ${{ steps.ver.outputs.version }} `
+            --packDir publish `
+            --mainExe GoXlrControlStudio.exe `
+            --packTitle "GoXLR Control Studio" `
+            --packAuthors "GoXLR Control Studio Contributors" `
+            --icon src/GoXlrControl.App/Assets/app.ico `
+            --outputDir releases
+
+      - name: Upload GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          vpk upload github `
+            --repoUrl "https://github.com/${{ github.repository }}" `
+            --outputDir releases `
+            --publish true `
+            --releaseName "GoXLR Control Studio ${{ steps.ver.outputs.version }}" `
+            --tag ${{ github.ref_name }} `
+            --token $env:GITHUB_TOKEN

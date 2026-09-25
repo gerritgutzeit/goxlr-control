@@ -9,6 +9,8 @@ bin/
 obj/
 artifacts/
 publish/
+Releases/
+releases/
 *.log
 TestResults/
 *.DotSettings.user
