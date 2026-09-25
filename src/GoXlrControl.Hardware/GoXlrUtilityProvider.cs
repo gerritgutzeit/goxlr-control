@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text.Json.Nodes;
 using GoXlrControl.Hardware.Abstractions;
 using Microsoft.Extensions.Logging;
@@ -7,11 +6,16 @@ namespace GoXlrControl.Hardware;
 
 public sealed class GoXlrUtilityProvider : IHardwareInputProvider, IHardwareOutputController
 {
+    private static readonly TimeSpan HttpReprobeInterval = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan StopWaitTimeout = TimeSpan.FromSeconds(5);
+
     private readonly ILogger<GoXlrUtilityProvider>? _logger;
     private readonly bool _autoStartDaemon;
     private readonly Dictionary<(string Serial, FaderId Fader), FaderSnapshot> _lastFaders = new();
     private readonly Dictionary<(string Serial, HardwareButtonId Button), bool> _lastButtons = new();
     private readonly SemaphoreSlim _commandGate = new(1, 1);
+    private readonly SemaphoreSlim _publishGate = new(1, 1);
+    private readonly object _lifecycleGate = new();
     private CancellationTokenSource? _runCts;
     private Task? _runTask;
     private WebSocketStatusClient? _ws;
@@ -38,20 +42,79 @@ public sealed class GoXlrUtilityProvider : IHardwareInputProvider, IHardwareOutp
 
     public Task StartAsync(CancellationToken cancellationToken = default)
     {
-        _runCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        _runTask = Task.Run(() => RunAsync(_runCts.Token), CancellationToken.None);
+        lock (_lifecycleGate)
+        {
+            if (_runTask is { IsCompleted: false })
+            {
+                Log("Hardware-Start ignoriert — Lauf bereits aktiv.");
+                return Task.CompletedTask;
+            }
+
+            _runCts?.Dispose();
+            _runCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            _runTask = Task.Run(() => RunAsync(_runCts.Token), CancellationToken.None);
+        }
+
         return Task.CompletedTask;
     }
 
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
-        _runCts?.Cancel();
-        if (_runTask is not null)
-            await Task.WhenAny(_runTask, Task.Delay(2000, cancellationToken)).ConfigureAwait(false);
-        if (_ws is not null)
-            await _ws.DisposeAsync().ConfigureAwait(false);
-        _ws = null;
+        Task? runTask;
+        CancellationTokenSource? cts;
+        lock (_lifecycleGate)
+        {
+            cts = _runCts;
+            runTask = _runTask;
+            _runCts = null;
+            _runTask = null;
+        }
+
+        try
+        {
+            cts?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // already disposed
+        }
+
+        if (runTask is not null)
+        {
+            var finished = await Task.WhenAny(runTask, Task.Delay(StopWaitTimeout, cancellationToken))
+                .ConfigureAwait(false);
+            if (finished != runTask)
+                Log("Hardware-Stop: Lauf beendete nicht innerhalb des Timeouts — Fortsetzen nach Cleanup.");
+            else
+            {
+                try
+                {
+                    await runTask.ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    // expected on cancel
+                }
+                catch (Exception ex)
+                {
+                    Log($"Hardware-Stop: Lauf endete mit Fehler: {ex.Message}");
+                }
+            }
+        }
+
+        WebSocketStatusClient? ws;
+        lock (_lifecycleGate)
+        {
+            ws = _ws;
+            _ws = null;
+        }
+
+        if (ws is not null)
+            await ws.DisposeAsync().ConfigureAwait(false);
+
+        ClearCaches();
         SetState(HardwareConnectionState.Disconnected);
+        cts?.Dispose();
     }
 
     private async Task RunAsync(CancellationToken ct)
@@ -120,13 +183,15 @@ public sealed class GoXlrUtilityProvider : IHardwareInputProvider, IHardwareOutp
 
                 var (host, port) = DaemonStatusParser.GetHttpEndpoint(status);
                 var wsUri = new Uri($"ws://{host}:{port}/api/websocket");
-                _ws = new WebSocketStatusClient();
-                _ws.MessageLogged += (_, msg) => Log(msg);
-                _ws.StatusUpdated += (_, s) => _ = PublishStatusAsync(s, isInitial: false, CancellationToken.None);
+                var ws = new WebSocketStatusClient();
+                lock (_lifecycleGate)
+                    _ws = ws;
+                ws.MessageLogged += (_, msg) => Log(msg);
+                ws.StatusUpdated += (_, s) => _ = PublishStatusAsync(s, isInitial: false, CancellationToken.None);
                 var disconnected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                _ws.Disconnected += (_, _) => disconnected.TrySetResult();
+                ws.Disconnected += (_, _) => disconnected.TrySetResult();
 
-                await _ws.ConnectAsync(wsUri, ct).ConfigureAwait(false);
+                await ws.ConnectAsync(wsUri, ct).ConfigureAwait(false);
                 if (_devices.Count == 0)
                     SetState(HardwareConnectionState.NoDevice);
                 else
@@ -149,17 +214,22 @@ public sealed class GoXlrUtilityProvider : IHardwareInputProvider, IHardwareOutp
             }
             finally
             {
-                if (_ws is not null)
+                WebSocketStatusClient? ws;
+                lock (_lifecycleGate)
                 {
-                    await _ws.DisposeAsync().ConfigureAwait(false);
+                    ws = _ws;
                     _ws = null;
                 }
+
+                if (ws is not null)
+                    await ws.DisposeAsync().ConfigureAwait(false);
             }
         }
     }
 
     private async Task PollPipeAsync(CancellationToken ct)
     {
+        var nextHttpReprobe = DateTimeOffset.UtcNow + HttpReprobeInterval;
         while (!ct.IsCancellationRequested)
         {
             try
@@ -173,6 +243,16 @@ public sealed class GoXlrUtilityProvider : IHardwareInputProvider, IHardwareOutp
                     SetState(HardwareConnectionState.NoDevice);
                 else
                     SetState(HardwareConnectionState.HttpDisabled);
+
+                if (DateTimeOffset.UtcNow >= nextHttpReprobe)
+                {
+                    nextHttpReprobe = DateTimeOffset.UtcNow + HttpReprobeInterval;
+                    if (DaemonStatusParser.IsHttpEnabled(status))
+                    {
+                        Log("Utility-HTTP wieder aktiv — wechsle zu WebSocket.");
+                        return;
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -184,42 +264,71 @@ public sealed class GoXlrUtilityProvider : IHardwareInputProvider, IHardwareOutp
         }
     }
 
-    private Task PublishStatusAsync(JsonNode status, bool isInitial, CancellationToken ct)
+    private async Task PublishStatusAsync(JsonNode status, bool isInitial, CancellationToken ct)
     {
-        _devices = DaemonStatusParser.ParseDevices(status).ToList();
-        var now = DateTimeOffset.UtcNow;
-
-        foreach (var device in _devices)
+        await _publishGate.WaitAsync(ct).ConfigureAwait(false);
+        try
         {
-            foreach (var fader in DaemonStatusParser.ParseFaders(status, device.SerialNumber))
-            {
-                var key = (device.SerialNumber, fader.Fader);
-                if (!isInitial && _lastFaders.TryGetValue(key, out var prev) &&
-                    prev.RawVolume == fader.RawVolume && prev.ChannelName == fader.ChannelName)
-                    continue;
+            _devices = DaemonStatusParser.ParseDevices(status).ToList();
+            var now = DateTimeOffset.UtcNow;
 
-                _lastFaders[key] = fader;
-                FaderChanged?.Invoke(this, new FaderValueChanged(
-                    device.SerialNumber, fader.Fader, fader.ChannelName,
-                    fader.Normalized, fader.RawVolume, now, isInitial));
+            foreach (var device in _devices)
+            {
+                foreach (var fader in DaemonStatusParser.ParseFaders(status, device.SerialNumber))
+                {
+                    var key = (device.SerialNumber, fader.Fader);
+                    if (!isInitial && _lastFaders.TryGetValue(key, out var prev) &&
+                        prev.RawVolume == fader.RawVolume && prev.ChannelName == fader.ChannelName)
+                        continue;
+
+                    _lastFaders[key] = fader;
+                    FaderChanged?.Invoke(this, new FaderValueChanged(
+                        device.SerialNumber, fader.Fader, fader.ChannelName,
+                        fader.Normalized, fader.RawVolume, now, isInitial));
+                }
+
+                foreach (var button in DaemonStatusParser.ParseButtons(status, device.SerialNumber))
+                {
+                    var key = (device.SerialNumber, button.Button);
+                    if (!isInitial && _lastButtons.TryGetValue(key, out var prev) && prev == button.IsPressed)
+                        continue;
+
+                    _lastButtons[key] = button.IsPressed;
+                    ButtonChanged?.Invoke(this, new ButtonStateChanged(
+                        device.SerialNumber, button.Button, button.IsPressed, now, isInitial));
+                }
             }
 
-            foreach (var button in DaemonStatusParser.ParseButtons(status, device.SerialNumber))
-            {
-                var key = (device.SerialNumber, button.Button);
-                if (!isInitial && _lastButtons.TryGetValue(key, out var prev) && prev == button.IsPressed)
-                    continue;
-
-                _lastButtons[key] = button.IsPressed;
-                ButtonChanged?.Invoke(this, new ButtonStateChanged(
-                    device.SerialNumber, button.Button, button.IsPressed, now, isInitial));
-            }
+            if (!isInitial && _devices.Count == 0 && ConnectionState == HardwareConnectionState.Connected)
+                SetState(HardwareConnectionState.NoDevice);
         }
+        finally
+        {
+            _publishGate.Release();
+        }
+    }
 
-        if (!isInitial && _devices.Count == 0 && ConnectionState == HardwareConnectionState.Connected)
-            SetState(HardwareConnectionState.NoDevice);
+    private void ClearCaches()
+    {
+        EmitSyntheticButtonReleases();
+        _lastFaders.Clear();
+        _lastButtons.Clear();
+        _devices = new List<HardwareDeviceInfo>();
+    }
 
-        return Task.CompletedTask;
+    /// <summary>
+    /// If a physical button was held when the device disconnects, listeners must see a release
+    /// so Engine/Lighting do not stay stuck in a pressed state.
+    /// </summary>
+    private void EmitSyntheticButtonReleases()
+    {
+        var now = DateTimeOffset.UtcNow;
+        foreach (var ((serial, button), pressed) in _lastButtons.ToList())
+        {
+            if (!pressed) continue;
+            _lastButtons[(serial, button)] = false;
+            ButtonChanged?.Invoke(this, new ButtonStateChanged(serial, button, false, now, IsInitial: false));
+        }
     }
 
     private void SetState(HardwareConnectionState state)
@@ -282,7 +391,10 @@ public sealed class GoXlrUtilityProvider : IHardwareInputProvider, IHardwareOutp
         await _commandGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var ws = _ws;
+            WebSocketStatusClient? ws;
+            lock (_lifecycleGate)
+                ws = _ws;
+
             if (ws is { IsConnected: true })
             {
                 var response = await ws.SendRequestAsync(command, ct).ConfigureAwait(false);

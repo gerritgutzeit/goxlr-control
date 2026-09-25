@@ -20,7 +20,7 @@ public class FallbackDiscordIntegrationTests
     }
 
     [Fact]
-    public async Task ToggleMute_SendsChord_AndReportsCommandSentNotConfirmed()
+    public async Task ToggleMute_SendsChord_AndReportsMirroredNotConfirmed()
     {
         var sent = new List<string>();
         var sut = CreateSut(out _, chord => sent.Add(chord), mute: "Ctrl+Shift+M");
@@ -36,9 +36,19 @@ public class FallbackDiscordIntegrationTests
         last!.Reliability.Should().Be(DiscordStatusReliability.Mirrored);
         last.Mute.Should().Be(DiscordTriState.On);
         last.Deafen.Should().Be(DiscordTriState.Unknown);
+        last.Connection.Should().Be(DiscordConnectionState.Disconnected);
         last.StatusConfirmedAt.Should().NotBeNull();
         sut.Current.Reliability.Should().Be(DiscordStatusReliability.Mirrored);
         sut.Current.Reliability.Should().NotBe(DiscordStatusReliability.Confirmed);
+    }
+
+    [Fact]
+    public async Task Start_ReportsDisconnectedVoiceApiConnection()
+    {
+        var sut = CreateSut(out _);
+        await sut.StartAsync();
+        sut.Current.Connection.Should().Be(DiscordConnectionState.Disconnected);
+        sut.ConnectionState.Should().Be(DiscordConnectionState.Disconnected);
     }
 
     [Fact]

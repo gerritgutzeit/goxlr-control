@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using GoXlrControl.Abstractions;
 using GoXlrControl.Config;
 using GoXlrControl.Hardware.Abstractions;
 using Microsoft.Extensions.Logging;
@@ -7,6 +8,8 @@ namespace GoXlrControl.Engine;
 
 public sealed class ControllerEngine : IAsyncDisposable
 {
+    private static readonly TimeSpan FaderCoalesceWindow = TimeSpan.FromMilliseconds(12);
+
     private readonly IHardwareInputProvider _hardware;
     private readonly IVolumeSink _volume;
     private readonly ActionDispatcher _actions;
@@ -15,6 +18,7 @@ public sealed class ControllerEngine : IAsyncDisposable
     private readonly ConcurrentDictionary<FaderId, double> _lastHardware = new();
     private readonly ConcurrentDictionary<FaderId, double> _lastTarget = new();
     private readonly ConcurrentDictionary<FaderId, bool> _softTakeoverWarned = new();
+    private readonly ConcurrentDictionary<FaderId, FaderCoalesceSlot> _faderCoalesce = new();
     private readonly ButtonDebouncer _debouncer = new();
     private readonly ConcurrentDictionary<HardwareButtonId, DateTimeOffset> _pressStarted = new();
     private readonly object _gate = new();
@@ -68,14 +72,34 @@ public sealed class ControllerEngine : IAsyncDisposable
         lock (_gate)
         {
             _profile = profile;
-            foreach (var tracker in _takeovers.Values)
-                tracker.Reset();
-            _takeovers.Clear();
-            _softTakeoverWarned.Clear();
+            ResetSoftTakeoverLocked();
         }
 
         ProfileChanged?.Invoke(this, EventArgs.Empty);
         DiagnosticMessage?.Invoke(this, $"Profil aktiv: {profile.Name}");
+    }
+
+    /// <summary>
+    /// Resets soft-takeover trackers after hardware resync without forcing volume writes.
+    /// </summary>
+    public void ResetSoftTakeover()
+    {
+        lock (_gate)
+            ResetSoftTakeoverLocked();
+
+        foreach (var fader in Enum.GetValues<FaderId>())
+            SoftTakeoverPendingChanged?.Invoke(this, fader);
+    }
+
+    private void ResetSoftTakeoverLocked()
+    {
+        foreach (var tracker in _takeovers.Values)
+            tracker.Reset();
+        _takeovers.Clear();
+        _softTakeoverWarned.Clear();
+        foreach (var slot in _faderCoalesce.Values)
+            slot.Cancel();
+        _faderCoalesce.Clear();
     }
 
     public void Start()
@@ -83,6 +107,7 @@ public sealed class ControllerEngine : IAsyncDisposable
         if (_started) return;
         _hardware.FaderChanged += OnFaderChanged;
         _hardware.ButtonChanged += OnButtonChanged;
+        _hardware.ConnectionChanged += OnConnectionChanged;
         _started = true;
     }
 
@@ -91,10 +116,23 @@ public sealed class ControllerEngine : IAsyncDisposable
         if (!_started) return;
         _hardware.FaderChanged -= OnFaderChanged;
         _hardware.ButtonChanged -= OnButtonChanged;
+        _hardware.ConnectionChanged -= OnConnectionChanged;
+        foreach (var slot in _faderCoalesce.Values)
+            slot.Cancel();
+        _faderCoalesce.Clear();
         _started = false;
     }
 
-    private async void OnFaderChanged(object? sender, FaderValueChanged e)
+    private void OnConnectionChanged(object? sender, HardwareConnectionState state)
+    {
+        if (state is HardwareConnectionState.Connected or HardwareConnectionState.HttpDisabled)
+        {
+            ResetSoftTakeover();
+            DiagnosticMessage?.Invoke(this, $"Hardware {state} — Soft-Takeover zurückgesetzt.");
+        }
+    }
+
+    private void OnFaderChanged(object? sender, FaderValueChanged e)
     {
         try
         {
@@ -103,6 +141,37 @@ public sealed class ControllerEngine : IAsyncDisposable
                 _lastHardware[e.Fader] = e.NormalizedValue;
                 return;
             }
+
+            FaderBinding? binding;
+            lock (_gate)
+                binding = _profile.Faders.FirstOrDefault(f => f.FaderId.Equals(e.Fader.ToString(), StringComparison.OrdinalIgnoreCase));
+
+            if (binding is null || binding.Target.Kind == FaderTargetKind.None)
+            {
+                _lastHardware[e.Fader] = e.NormalizedValue;
+                return;
+            }
+
+            var slot = _faderCoalesce.GetOrAdd(e.Fader, _ => new FaderCoalesceSlot());
+            slot.Schedule(e, () => ProcessFaderAsync(e.Fader), FaderCoalesceWindow);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "Fader-Verarbeitung fehlgeschlagen");
+            DiagnosticMessage?.Invoke(this, $"Fader-Fehler: {ex.Message}");
+        }
+    }
+
+    private async Task ProcessFaderAsync(FaderId faderId)
+    {
+        try
+        {
+            if (!_faderCoalesce.TryGetValue(faderId, out var slot))
+                return;
+
+            var e = slot.TakeLatest();
+            if (e is null || _paused)
+                return;
 
             FaderBinding? binding;
             lock (_gate)
@@ -226,5 +295,62 @@ public sealed class ControllerEngine : IAsyncDisposable
     {
         Stop();
         return ValueTask.CompletedTask;
+    }
+
+    /// <summary>Latest-wins coalesce slot for one fader.</summary>
+    private sealed class FaderCoalesceSlot
+    {
+        private readonly object _gate = new();
+        private FaderValueChanged? _pending;
+        private CancellationTokenSource? _cts;
+
+        public void Schedule(FaderValueChanged value, Func<Task> process, TimeSpan window)
+        {
+            CancellationTokenSource cts;
+            lock (_gate)
+            {
+                _pending = value;
+                _cts?.Cancel();
+                _cts?.Dispose();
+                _cts = new CancellationTokenSource();
+                cts = _cts;
+            }
+
+            _ = RunAsync(cts, process, window);
+        }
+
+        public FaderValueChanged? TakeLatest()
+        {
+            lock (_gate)
+            {
+                var value = _pending;
+                _pending = null;
+                return value;
+            }
+        }
+
+        public void Cancel()
+        {
+            lock (_gate)
+            {
+                _cts?.Cancel();
+                _cts?.Dispose();
+                _cts = null;
+                _pending = null;
+            }
+        }
+
+        private async Task RunAsync(CancellationTokenSource cts, Func<Task> process, TimeSpan window)
+        {
+            try
+            {
+                await Task.Delay(window, cts.Token).ConfigureAwait(false);
+                await process().ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // superseded by a newer fader sample
+            }
+        }
     }
 }

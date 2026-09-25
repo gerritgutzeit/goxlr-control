@@ -12,6 +12,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\GoXlrControl.Config\GoXlrControl.Config.csproj" />
-    <ProjectReference Include="..\GoXlrControl.Engine\GoXlrControl.Engine.csproj" />
+    <ProjectReference Include="..\GoXlrControl.Abstractions\GoXlrControl.Abstractions.csproj" />
   </ItemGroup>
 </Project>

@@ -69,7 +69,7 @@ public sealed class ProfileStore
             }
             catch
             {
-                // corrupt file ignored; diagnostics can report separately
+                TryBackupCorruptProfile(file);
             }
         }
 
@@ -146,6 +146,21 @@ public sealed class ProfileStore
         }
 
         return profile;
+    }
+
+    private static void TryBackupCorruptProfile(string path)
+    {
+        try
+        {
+            var bak = path + ".bak";
+            if (File.Exists(bak))
+                File.Delete(bak);
+            File.Move(path, bak);
+        }
+        catch
+        {
+            // best-effort backup; leave original in place if rename fails
+        }
     }
 }
 

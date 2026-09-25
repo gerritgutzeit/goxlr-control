@@ -8,7 +8,7 @@
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <RootNamespace>GoXlrControl.App</RootNamespace>
     <AssemblyName>GoXlrControlStudio</AssemblyName>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Product>GoXLR Control Studio</Product>
     <StartupObject>GoXlrControl.App.App</StartupObject>
     <RepositoryUrl>https://github.com/gerritgutzeit/goxlr-control</RepositoryUrl>
@@ -29,6 +29,7 @@
     <ProjectReference Include="..\GoXlrControl.Hardware.Abstractions\GoXlrControl.Hardware.Abstractions.csproj" />
     <ProjectReference Include="..\GoXlrControl.Hardware\GoXlrControl.Hardware.csproj" />
     <ProjectReference Include="..\GoXlrControl.Engine\GoXlrControl.Engine.csproj" />
+    <ProjectReference Include="..\GoXlrControl.Abstractions\GoXlrControl.Abstractions.csproj" />
     <ProjectReference Include="..\GoXlrControl.Audio\GoXlrControl.Audio.csproj" />
     <ProjectReference Include="..\GoXlrControl.Integrations\GoXlrControl.Integrations.csproj" />
     <ProjectReference Include="..\GoXlrControl.Config\GoXlrControl.Config.csproj" />

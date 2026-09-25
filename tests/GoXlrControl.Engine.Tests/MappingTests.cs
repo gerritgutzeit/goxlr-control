@@ -53,12 +53,31 @@ public class SoftTakeoverTests
 public class ButtonDebouncerTests
 {
     [Fact]
-    public void RejectsBounceWithinWindow()
+    public void AlwaysAcceptsRelease_EvenWithinWindow()
     {
         var d = new ButtonDebouncer(TimeSpan.FromMilliseconds(40));
         var t0 = DateTimeOffset.UtcNow;
         d.TryUpdate(Hardware.Abstractions.HardwareButtonId.Bleep, true, t0, out _).Should().BeTrue();
-        d.TryUpdate(Hardware.Abstractions.HardwareButtonId.Bleep, false, t0.AddMilliseconds(10), out _).Should().BeFalse();
-        d.TryUpdate(Hardware.Abstractions.HardwareButtonId.Bleep, false, t0.AddMilliseconds(50), out _).Should().BeTrue();
+        d.TryUpdate(Hardware.Abstractions.HardwareButtonId.Bleep, false, t0.AddMilliseconds(10), out _).Should().BeTrue();
+    }
+
+    [Fact]
+    public void RejectsPressBounceWithinWindow_AfterRelease()
+    {
+        var d = new ButtonDebouncer(TimeSpan.FromMilliseconds(40));
+        var t0 = DateTimeOffset.UtcNow;
+        d.TryUpdate(Hardware.Abstractions.HardwareButtonId.Bleep, true, t0, out _).Should().BeTrue();
+        d.TryUpdate(Hardware.Abstractions.HardwareButtonId.Bleep, false, t0.AddMilliseconds(5), out _).Should().BeTrue();
+        d.TryUpdate(Hardware.Abstractions.HardwareButtonId.Bleep, true, t0.AddMilliseconds(15), out _).Should().BeFalse();
+        d.TryUpdate(Hardware.Abstractions.HardwareButtonId.Bleep, true, t0.AddMilliseconds(50), out _).Should().BeTrue();
+    }
+
+    [Fact]
+    public void RejectsDuplicateSameState()
+    {
+        var d = new ButtonDebouncer(TimeSpan.FromMilliseconds(40));
+        var t0 = DateTimeOffset.UtcNow;
+        d.TryUpdate(Hardware.Abstractions.HardwareButtonId.Bleep, true, t0, out _).Should().BeTrue();
+        d.TryUpdate(Hardware.Abstractions.HardwareButtonId.Bleep, true, t0.AddMilliseconds(100), out _).Should().BeFalse();
     }
 }

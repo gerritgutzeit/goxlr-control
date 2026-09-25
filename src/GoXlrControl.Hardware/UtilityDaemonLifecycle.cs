@@ -35,11 +35,38 @@ public static class UtilityDaemonLifecycle
             Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
             "GoXLR Utility"));
 
-    public static bool IsDaemonRunning() =>
-        DaemonProcessNames.Any(name => Process.GetProcessesByName(name).Length > 0);
+    public static bool IsDaemonRunning() => AnyProcessRunning(DaemonProcessNames);
 
-    public static bool IsOfficialAppRunning() =>
-        OfficialAppProcessNames.Any(name => Process.GetProcessesByName(name).Length > 0);
+    public static bool IsOfficialAppRunning() => AnyProcessRunning(OfficialAppProcessNames);
+
+    private static bool AnyProcessRunning(IEnumerable<string> names)
+    {
+        foreach (var name in names)
+        {
+            Process[] processes;
+            try
+            {
+                processes = Process.GetProcessesByName(name);
+            }
+            catch
+            {
+                continue;
+            }
+
+            try
+            {
+                if (processes.Length > 0)
+                    return true;
+            }
+            finally
+            {
+                foreach (var process in processes)
+                    process.Dispose();
+            }
+        }
+
+        return false;
+    }
 
     /// <summary>
     /// Starts goxlr-daemon if installed and not already running.

@@ -10,6 +10,7 @@ GoXLR Control Studio ist eine lokale Windows-Desktop-App, die die GoXLR Mini üb
 flowchart TB
   App[GoXlrControl.App]
   Eng[GoXlrControl.Engine]
+  Abs[GoXlrControl.Abstractions]
   HwAbs[Hardware.Abstractions]
   Hw[GoXlrControl.Hardware]
   Aud[GoXlrControl.Audio]
@@ -17,23 +18,35 @@ flowchart TB
   Cfg[GoXlrControl.Config]
   Diag[GoXlrControl.Diagnostics]
   App --> Eng
+  App --> Hw
+  App --> HwAbs
+  App --> Abs
+  App --> Aud
+  App --> Int
   App --> Cfg
   App --> Diag
   Eng --> HwAbs
-  Eng --> Aud
-  Eng --> Int
+  Eng --> Abs
   Eng --> Cfg
+  Aud --> Abs
+  Aud --> Cfg
+  Int --> Eng
+  Int --> Abs
+  Int --> Cfg
   Hw --> HwAbs
+  Abs --> Cfg
 ```
+
+App ist der Composition Root. `IVolumeSink` liegt in `GoXlrControl.Abstractions` (Audio implementiert, Engine/Integrations konsumieren). Discord-Ports bleiben vorerst in Engine (gated Fallback).
 
 ## Laufzeitfluss
 
 1. Host startet Services (Hardware-Provider, Audio, Engine, Tray).
-2. Provider verbindet Pipe → WS, hält Status-Cache.
+2. Provider verbindet Pipe → WS (oder Pipe-Polling bei HttpDisabled), hält Status-Cache.
 3. Normalisierte Events (`FaderChanged`, `ButtonChanged`) → Engine.
-4. Engine mappt über aktives Profil auf Actions.
+4. Engine mappt über aktives Profil auf Actions (Fader mit Coalesce ~12 ms latest-wins).
 5. Executors (Audio / SendInput / Media / Launch) führen aus.
-6. UI beobachtet Engine-/Provider-State via MVVM.
+6. UI beobachtet Provider-/Engine-/Lighting-Events via MVVM (`Dispatcher.InvokeAsync`).
 
 ## Nicht-Ziele
 

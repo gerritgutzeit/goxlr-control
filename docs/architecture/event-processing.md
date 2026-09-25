@@ -12,10 +12,10 @@
 ```text
 Patch → resolve fader via channel assignment → normalize 0..1
   → apply invert/min/max/curve → SoftTakeover gate
-  → coalesce (latest wins, ~8–16ms) → ActionDispatcher → WASAPI
+  → coalesce (latest wins, ~12ms) → ActionDispatcher → WASAPI
 ```
 
-- Buttons: **kein** Coalescing; Debounce ~30–50 ms gegen Bounce
+- Buttons: **kein** Coalescing; Debounce ~40 ms gegen Bounce (Release immer akzeptiert)
 - Performance-Ziel: Median Event→Write &lt; 40 ms (messen in M3)
 
 ## Soft Takeover (Default)
@@ -37,4 +37,4 @@ Disconnected → Backoff(250ms..10s) → Pipe GetStatus → WS → Resync
 → Devices empty? NoDevice : Connected
 ```
 
-Nach Resync: Soft-Takeover zurücksetzen (kein Force-Write).
+Nach Resync (`Connected` / `HttpDisabled`): Soft-Takeover zurücksetzen (kein Force-Write).

@@ -229,7 +229,8 @@ public sealed class FallbackDiscordIntegration : IDiscordIntegration
             Deafen: _deafen,
             Reliability: _reliability,
             StatusConfirmedAt: _statusAt,
-            Connection: _started ? DiscordConnectionState.Disconnected : DiscordConnectionState.Disconnected,
+            // Fallback never opens a Discord voice API connection; Disconnected is intentional.
+            Connection: DiscordConnectionState.Disconnected,
             Mode: DiscordOperatingMode.Fallback);
 
     private void Publish()

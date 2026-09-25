@@ -94,6 +94,10 @@ public sealed class ButtonDebouncer
         _debounce = debounce ?? TimeSpan.FromMilliseconds(40);
     }
 
+    /// <summary>
+    /// Accepts edge transitions. Releases are always accepted (avoids sticky pressed after bounce).
+    /// Presses within the debounce window after the last accepted edge are rejected.
+    /// </summary>
     public bool TryUpdate(HardwareButtonId button, bool pressed, DateTimeOffset timestamp, out bool acceptedPressed)
     {
         acceptedPressed = pressed;
@@ -101,6 +105,14 @@ public sealed class ButtonDebouncer
         {
             if (prev.Pressed == pressed)
                 return false;
+
+            // Always accept release so a bounce-rejected release cannot leave sticky pressed.
+            if (!pressed)
+            {
+                _state[button] = (false, timestamp);
+                return true;
+            }
+
             if (timestamp - prev.ChangedAt < _debounce)
                 return false;
         }

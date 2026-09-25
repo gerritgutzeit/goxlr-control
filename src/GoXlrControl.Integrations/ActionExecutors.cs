@@ -1,3 +1,4 @@
+using GoXlrControl.Abstractions;
 using GoXlrControl.Config;
 using GoXlrControl.Engine;
 

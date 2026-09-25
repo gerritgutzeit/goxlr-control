@@ -35,6 +35,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GoXlrControl.DiagHost", "to
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GoXlrControl.Integrations.Tests", "tests\GoXlrControl.Integrations.Tests\GoXlrControl.Integrations.Tests.csproj", "{B316C2F4-230A-4033-82BA-EB0A745A0F1F}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GoXlrControl.Abstractions", "src\GoXlrControl.Abstractions\GoXlrControl.Abstractions.csproj", "{9215525A-2B3D-4AF0-8F4A-0E1E3C64FED4}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -96,6 +98,10 @@ Global
 		{B316C2F4-230A-4033-82BA-EB0A745A0F1F}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{B316C2F4-230A-4033-82BA-EB0A745A0F1F}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{B316C2F4-230A-4033-82BA-EB0A745A0F1F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9215525A-2B3D-4AF0-8F4A-0E1E3C64FED4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9215525A-2B3D-4AF0-8F4A-0E1E3C64FED4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9215525A-2B3D-4AF0-8F4A-0E1E3C64FED4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9215525A-2B3D-4AF0-8F4A-0E1E3C64FED4}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{88858A71-2560-44D8-AC84-8CF32AD30558} = {FA9D11ED-DD90-4E4C-A449-BD42C106C79D}
@@ -111,5 +117,6 @@ Global
 		{B9A2C4C2-5D81-4221-AB8F-50F332BF6CE5} = {FA9D11ED-DD90-4E4C-A449-BD42C106C79D}
 		{8B070152-0A5B-440B-88B2-F299970A70EA} = {51E54A29-E45A-4164-8451-94AA7104454E}
 		{B316C2F4-230A-4033-82BA-EB0A745A0F1F} = {118468CA-3FC7-4856-8E58-A6FD35995AF2}
+		{9215525A-2B3D-4AF0-8F4A-0E1E3C64FED4} = {FA9D11ED-DD90-4E4C-A449-BD42C106C79D}
 	EndGlobalSection
 EndGlobal

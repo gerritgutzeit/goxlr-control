@@ -1,7 +1,8 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using GoXlrControl.Abstractions;
 using GoXlrControl.Config;
-using GoXlrControl.Engine;
 using Microsoft.Extensions.Logging;
 using NAudio.CoreAudioApi;
 
@@ -10,9 +11,11 @@ namespace GoXlrControl.Audio;
 public sealed class WindowsAudioService : IVolumeSink, IDisposable
 {
     public static readonly Guid AppEventContext = new("A7C0F8D2-4E91-4B6A-9C3E-1D2F3A4B5C6D");
+    private static readonly TimeSpan ProcessCacheTtl = TimeSpan.FromSeconds(5);
 
     private readonly MMDeviceEnumerator _enumerator = new();
     private readonly ILogger<WindowsAudioService>? _logger;
+    private readonly ConcurrentDictionary<int, CachedProcessInfo> _processCache = new();
     private bool _followDefault;
     private string? _explicitDeviceId;
 
@@ -71,17 +74,12 @@ public sealed class WindowsAudioService : IVolumeSink, IDisposable
                 var pid = (int)s.GetProcessID;
                 string? exe = null;
                 string display = s.DisplayName;
-                try
+                if (pid > 0 && TryGetProcessInfo(pid) is { } info)
                 {
-                    if (pid > 0)
-                    {
-                        using var proc = Process.GetProcessById(pid);
-                        exe = SafeGetPath(proc) ?? proc.ProcessName;
-                        if (string.IsNullOrWhiteSpace(display))
-                            display = proc.ProcessName;
-                    }
+                    exe = info.Path ?? info.ProcessName;
+                    if (string.IsNullOrWhiteSpace(display))
+                        display = info.ProcessName;
                 }
-                catch { /* access denied */ }
 
                 result.Add(new AudioSessionInfo(
                     s.GetSessionIdentifier,
@@ -237,7 +235,7 @@ public sealed class WindowsAudioService : IVolumeSink, IDisposable
         }
     }
 
-    private static bool Matches(AudioSessionControl session, AppIdentity identity)
+    private bool Matches(AudioSessionControl session, AppIdentity identity)
     {
         try
         {
@@ -257,22 +255,43 @@ public sealed class WindowsAudioService : IVolumeSink, IDisposable
         }
     }
 
-    private static bool MatchesExe(AudioSessionControl session, string exePathOrName)
+    private bool MatchesExe(AudioSessionControl session, string exePathOrName)
     {
         try
         {
             var pid = (int)session.GetProcessID;
             if (pid <= 0) return false;
-            using var proc = Process.GetProcessById(pid);
-            var path = SafeGetPath(proc);
-            if (path is not null && path.Equals(exePathOrName, StringComparison.OrdinalIgnoreCase))
+            if (TryGetProcessInfo(pid) is not { } info)
+                return false;
+
+            if (info.Path is not null && info.Path.Equals(exePathOrName, StringComparison.OrdinalIgnoreCase))
                 return true;
-            return proc.ProcessName.Equals(Path.GetFileNameWithoutExtension(exePathOrName), StringComparison.OrdinalIgnoreCase)
-                   || (path is not null && Path.GetFileName(path).Equals(Path.GetFileName(exePathOrName), StringComparison.OrdinalIgnoreCase));
+            return info.ProcessName.Equals(Path.GetFileNameWithoutExtension(exePathOrName), StringComparison.OrdinalIgnoreCase)
+                   || (info.Path is not null && Path.GetFileName(info.Path).Equals(Path.GetFileName(exePathOrName), StringComparison.OrdinalIgnoreCase));
         }
         catch
         {
             return false;
+        }
+    }
+
+    private CachedProcessInfo? TryGetProcessInfo(int pid)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (_processCache.TryGetValue(pid, out var cached) && now - cached.CachedAt < ProcessCacheTtl)
+            return cached;
+
+        try
+        {
+            using var proc = Process.GetProcessById(pid);
+            var info = new CachedProcessInfo(SafeGetPath(proc), proc.ProcessName, now);
+            _processCache[pid] = info;
+            return info;
+        }
+        catch
+        {
+            _processCache.TryRemove(pid, out _);
+            return null;
         }
     }
 
@@ -294,6 +313,8 @@ public sealed class WindowsAudioService : IVolumeSink, IDisposable
         friendlyName.Contains("GoXLR", StringComparison.OrdinalIgnoreCase);
 
     public void Dispose() => _enumerator.Dispose();
+
+    private readonly record struct CachedProcessInfo(string? Path, string ProcessName, DateTimeOffset CachedAt);
 }
 
 public sealed record AudioEndpointInfo(string Id, string FriendlyName, bool IsGoXlr);

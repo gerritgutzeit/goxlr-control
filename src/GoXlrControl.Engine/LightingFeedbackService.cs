@@ -1,4 +1,5 @@
 using System.Globalization;
+using GoXlrControl.Abstractions;
 using GoXlrControl.Config;
 using GoXlrControl.Hardware.Abstractions;
 using Microsoft.Extensions.Logging;
@@ -23,12 +24,14 @@ public sealed class LightingFeedbackService : IAsyncDisposable
     private readonly ILogger<LightingFeedbackService>? _logger;
     private CancellationTokenSource? _cts;
     private Task? _loop;
+    private readonly object _colourCacheGate = new();
     private readonly Dictionary<FaderId, (string C1, string C2)> _lastFaderColours = new();
     private readonly Dictionary<FaderId, FaderDisplayStyle> _lastStyles = new();
     private readonly Dictionary<FaderId, double> _lastPeaks = new();
     private readonly Dictionary<HardwareButtonId, (string C1, string C2)> _lastButtonColours = new();
     private readonly Dictionary<HardwareButtonId, LightingOffStyle> _lastOffStyles = new();
     private AnimationMode? _lastAnimationMode;
+    private string _lastDiagnosticsSummary = "Lighting idle";
     private int _forceFullRewrite;
     private static readonly HardwareButtonId[] MiniButtons =
     [
@@ -116,9 +119,23 @@ public sealed class LightingFeedbackService : IAsyncDisposable
     private void RequestForceRewrite()
     {
         Interlocked.Exchange(ref _forceFullRewrite, 1);
-        _lastButtonColours.Clear();
-        _lastOffStyles.Clear();
-        _lastAnimationMode = null;
+        lock (_colourCacheGate)
+        {
+            _lastButtonColours.Clear();
+            _lastOffStyles.Clear();
+            _lastFaderColours.Clear();
+            _lastStyles.Clear();
+            _lastAnimationMode = null;
+        }
+    }
+
+    private void PublishDiagnostics(string summary)
+    {
+        if (string.Equals(_lastDiagnosticsSummary, summary, StringComparison.Ordinal))
+            return;
+        _lastDiagnosticsSummary = summary;
+        DiagnosticsSummary = summary;
+        DiagnosticsChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private async Task RunAsync(CancellationToken ct)
@@ -136,8 +153,7 @@ public sealed class LightingFeedbackService : IAsyncDisposable
             catch (Exception ex)
             {
                 _logger?.LogDebug(ex, "Lighting tick failed");
-                DiagnosticsSummary = $"Lighting error: {ex.Message}";
-                DiagnosticsChanged?.Invoke(this, EventArgs.Empty);
+                PublishDiagnostics($"Lighting error: {ex.Message}");
             }
 
             try
@@ -156,13 +172,13 @@ public sealed class LightingFeedbackService : IAsyncDisposable
         var settings = _settings();
         if (settings.LightingMode == LightingMode.Off)
         {
-            DiagnosticsSummary = "Lighting: Off";
+            PublishDiagnostics("Lighting: Off");
             return;
         }
 
         if (!_output.CanSendCommands)
         {
-            DiagnosticsSummary = $"Lighting: waiting ({_hardware.ConnectionState})";
+            PublishDiagnostics($"Lighting: waiting ({_hardware.ConnectionState})");
             return;
         }
 
@@ -183,27 +199,30 @@ public sealed class LightingFeedbackService : IAsyncDisposable
             var (c1, c2, style, peak) = await ResolveColoursAsync(binding, fader, settings).ConfigureAwait(false);
             lines.Add($"{fader}:{c1}/{c2} p={peak:0.00}");
 
-            if (force || !_lastStyles.TryGetValue(fader, out var prevStyle) || prevStyle != style)
+            bool styleChanged;
+            bool colourChanged;
+            lock (_colourCacheGate)
             {
+                styleChanged = force || !_lastStyles.TryGetValue(fader, out var prevStyle) || prevStyle != style;
+                colourChanged = force || !_lastFaderColours.TryGetValue(fader, out var prev) ||
+                                ColourChanged(prev.C1, c1) || ColourChanged(prev.C2, c2);
+                if (styleChanged)
+                    _lastStyles[fader] = style;
+                if (colourChanged)
+                    _lastFaderColours[fader] = (c1, c2);
+                _lastPeaks[fader] = peak;
+            }
+
+            if (styleChanged)
                 await _output.SetFaderDisplayStyleAsync(fader, style, ct).ConfigureAwait(false);
-                _lastStyles[fader] = style;
-            }
-
-            if (force || !_lastFaderColours.TryGetValue(fader, out var prev) ||
-                ColourChanged(prev.C1, c1) || ColourChanged(prev.C2, c2))
-            {
+            if (colourChanged)
                 await _output.SetFaderColoursAsync(fader, c1, c2, ct).ConfigureAwait(false);
-                _lastFaderColours[fader] = (c1, c2);
-            }
-
-            _lastPeaks[fader] = peak;
         }
 
         await UpdateMuteButtonLightsAsync(profile, settings, force, ct).ConfigureAwait(false);
         await UpdateDiscordButtonLightsAsync(profile, settings, force, ct).ConfigureAwait(false);
 
-        DiagnosticsSummary = string.Join(" · ", lines);
-        DiagnosticsChanged?.Invoke(this, EventArgs.Empty);
+        PublishDiagnostics(string.Join(" · ", lines));
     }
 
     /// <summary>
@@ -214,19 +233,28 @@ public sealed class LightingFeedbackService : IAsyncDisposable
     {
         try
         {
-            if (force || _lastAnimationMode != AnimationMode.None)
+            bool setAnimation;
+            var buttonsToUpdate = new List<HardwareButtonId>();
+            lock (_colourCacheGate)
             {
-                await _output.SetAnimationModeAsync(AnimationMode.None, ct).ConfigureAwait(false);
-                _lastAnimationMode = AnimationMode.None;
+                setAnimation = force || _lastAnimationMode != AnimationMode.None;
+                if (setAnimation)
+                    _lastAnimationMode = AnimationMode.None;
+
+                foreach (var button in MiniButtons)
+                {
+                    if (!force && _lastOffStyles.TryGetValue(button, out var prev) && prev == LightingOffStyle.Colour2)
+                        continue;
+                    _lastOffStyles[button] = LightingOffStyle.Colour2;
+                    buttonsToUpdate.Add(button);
+                }
             }
 
-            foreach (var button in MiniButtons)
-            {
-                if (!force && _lastOffStyles.TryGetValue(button, out var prev) && prev == LightingOffStyle.Colour2)
-                    continue;
+            if (setAnimation)
+                await _output.SetAnimationModeAsync(AnimationMode.None, ct).ConfigureAwait(false);
+
+            foreach (var button in buttonsToUpdate)
                 await _output.SetButtonOffStyleAsync(button, LightingOffStyle.Colour2, ct).ConfigureAwait(false);
-                _lastOffStyles[button] = LightingOffStyle.Colour2;
-            }
         }
         catch (Exception ex)
         {
@@ -242,12 +270,17 @@ public sealed class LightingFeedbackService : IAsyncDisposable
         var c2 = exclusive ? colour : Darken(colour);
         try
         {
-            if (force || !_lastButtonColours.TryGetValue(button, out var prev) ||
-                ColourChanged(prev.C1, c1) || ColourChanged(prev.C2, c2))
+            bool write;
+            lock (_colourCacheGate)
             {
-                await _output.SetButtonColoursAsync(button, c1, c2, ct).ConfigureAwait(false);
-                _lastButtonColours[button] = (c1, c2);
+                write = force || !_lastButtonColours.TryGetValue(button, out var prev) ||
+                        ColourChanged(prev.C1, c1) || ColourChanged(prev.C2, c2);
+                if (write)
+                    _lastButtonColours[button] = (c1, c2);
             }
+
+            if (write)
+                await _output.SetButtonColoursAsync(button, c1, c2, ct).ConfigureAwait(false);
         }
         catch
         {

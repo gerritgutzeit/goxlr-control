@@ -23,6 +23,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\GoXlrControl.Engine\GoXlrControl.Engine.csproj" />
+    <ProjectReference Include="..\..\src\GoXlrControl.Abstractions\GoXlrControl.Abstractions.csproj" />
     <ProjectReference Include="..\..\src\GoXlrControl.Config\GoXlrControl.Config.csproj" />
     <ProjectReference Include="..\..\src\GoXlrControl.Hardware\GoXlrControl.Hardware.csproj" />
   </ItemGroup>

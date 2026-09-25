@@ -1,4 +1,5 @@
 ﻿using System.Windows;
+using GoXlrControl.Abstractions;
 using GoXlrControl.App.Services;
 using GoXlrControl.App.ViewModels;
 using GoXlrControl.App.Views;

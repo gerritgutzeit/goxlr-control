@@ -7,9 +7,11 @@ namespace GoXlrControl.Hardware;
 /// </summary>
 public sealed class SimulatedHardwareProvider : IHardwareInputProvider, IHardwareOutputController
 {
+    private readonly object _lifecycleGate = new();
     private readonly double[] _faders = [0.5, 0.5, 0.5, 0.5];
     private readonly bool[] _buttons = new bool[6];
     private CancellationTokenSource? _cts;
+    private bool _started;
     private readonly Dictionary<FaderId, (FaderDisplayStyle Style, string C1, string C2)> _faderLights = new();
     private readonly Dictionary<HardwareButtonId, (string C1, string C2)> _buttonLights = new();
 
@@ -30,17 +32,28 @@ public sealed class SimulatedHardwareProvider : IHardwareInputProvider, IHardwar
 
     public Task StartAsync(CancellationToken cancellationToken = default)
     {
-        _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        ConnectionState = HardwareConnectionState.Connected;
-        ConnectionChanged?.Invoke(this, ConnectionState);
-        DiagnosticMessage?.Invoke(this, "Simulated hardware connected.");
-
-        var serial = Devices[0].SerialNumber;
-        var now = DateTimeOffset.UtcNow;
-        for (var i = 0; i < 4; i++)
+        lock (_lifecycleGate)
         {
-            FaderChanged?.Invoke(this, new FaderValueChanged(
-                serial, (FaderId)i, ChannelFor(i), _faders[i], (byte)(_faders[i] * 255), now, true));
+            if (_started)
+            {
+                DiagnosticMessage?.Invoke(this, "Simulated hardware start ignored — already running.");
+                return Task.CompletedTask;
+            }
+
+            _cts?.Dispose();
+            _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            _started = true;
+            ConnectionState = HardwareConnectionState.Connected;
+            ConnectionChanged?.Invoke(this, ConnectionState);
+            DiagnosticMessage?.Invoke(this, "Simulated hardware connected.");
+
+            var serial = Devices[0].SerialNumber;
+            var now = DateTimeOffset.UtcNow;
+            for (var i = 0; i < 4; i++)
+            {
+                FaderChanged?.Invoke(this, new FaderValueChanged(
+                    serial, (FaderId)i, ChannelFor(i), _faders[i], (byte)(_faders[i] * 255), now, true));
+            }
         }
 
         return Task.CompletedTask;
@@ -48,9 +61,29 @@ public sealed class SimulatedHardwareProvider : IHardwareInputProvider, IHardwar
 
     public Task StopAsync(CancellationToken cancellationToken = default)
     {
-        _cts?.Cancel();
-        ConnectionState = HardwareConnectionState.Disconnected;
-        ConnectionChanged?.Invoke(this, ConnectionState);
+        lock (_lifecycleGate)
+        {
+            if (!_started)
+                return Task.CompletedTask;
+
+            var serial = Devices[0].SerialNumber;
+            var now = DateTimeOffset.UtcNow;
+            for (var i = 0; i < _buttons.Length; i++)
+            {
+                if (!_buttons[i]) continue;
+                _buttons[i] = false;
+                ButtonChanged?.Invoke(this, new ButtonStateChanged(
+                    serial, (HardwareButtonId)i, false, now, false));
+            }
+
+            _cts?.Cancel();
+            _cts?.Dispose();
+            _cts = null;
+            _started = false;
+            ConnectionState = HardwareConnectionState.Disconnected;
+            ConnectionChanged?.Invoke(this, ConnectionState);
+        }
+
         return Task.CompletedTask;
     }
 

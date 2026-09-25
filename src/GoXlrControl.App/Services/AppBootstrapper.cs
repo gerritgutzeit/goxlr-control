@@ -55,6 +55,7 @@ public sealed class AppBootstrapper
         _settings.ActiveProfileId = active.Id;
         _settingsStore.Save(_settings);
 
+        _log.SetMinimumLevel(_settings.LogLevel);
         _audio.Configure(_settings.FollowDefaultPlayback, _settings.SelectedPlaybackDeviceId);
         _engine.SetProfile(active);
         _engine.IsPaused = _settings.ControllerPaused;
@@ -92,6 +93,7 @@ public sealed class AppBootstrapper
     {
         _settings = settings;
         _settingsStore.Save(settings);
+        _log.SetMinimumLevel(settings.LogLevel);
         _audio.Configure(settings.FollowDefaultPlayback, settings.SelectedPlaybackDeviceId);
         _engine.IsPaused = settings.ControllerPaused;
         ApplyAutostart(settings.StartWithWindows);
