@@ -1,0 +1,24 @@
+<Window x:Class="GoXlrControl.App.Views.WizardWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Erste Einrichtung — GoXLR Control Studio"
+        Height="560" Width="720"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize">
+  <DockPanel Margin="20">
+    <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+      <Button Content="Utility installieren / starten" Width="220" Margin="0,0,12,0"
+              Click="PatchUtility_Click" x:Name="PatchButton" Visibility="Collapsed"/>
+      <Button Content="Zurück" Width="100" Click="Back_Click" x:Name="BackButton"/>
+      <Button Content="Weiter" Width="100" Click="Next_Click" x:Name="NextButton"/>
+      <Button Content="Fertig" Width="100" Click="Finish_Click" x:Name="FinishButton" Visibility="Collapsed"/>
+    </StackPanel>
+    <StackPanel>
+      <TextBlock x:Name="StepTitle" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,8"/>
+      <TextBlock x:Name="StepBody" TextWrapping="Wrap" LineHeight="22" Foreground="#C5CCD6"/>
+      <Border Margin="0,20,0,0" Background="#1A1D26" Padding="12" CornerRadius="6">
+        <TextBlock x:Name="StepStatus" TextWrapping="Wrap" FontFamily="Consolas"/>
+      </Border>
+    </StackPanel>
+  </DockPanel>
+</Window>

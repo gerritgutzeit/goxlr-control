@@ -1,0 +1,17 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>GoXlrControl.Audio</RootNamespace>
+    <UseWindowsForms>false</UseWindowsForms>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="NAudio.Wasapi" Version="2.2.1" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\GoXlrControl.Config\GoXlrControl.Config.csproj" />
+    <ProjectReference Include="..\GoXlrControl.Engine\GoXlrControl.Engine.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,14 @@
+WICHTIG — Vor dem ersten Start
+
+1. Beende die offizielle TC-Helicon „GoXLR App“, falls sie läuft.
+2. Installiere die GoXLR Utility 1.2.4+:
+   winget install GoXLR-on-Linux.GoXLR-Utility
+   oder https://github.com/GoXLR-on-Linux/goxlr-utility/releases
+3. Lasse den Utility-Webserver aktiviert.
+4. Stelle sicher, dass Windows-Audio NICHT über die GoXLR als Default-Gerät läuft.
+
+GoXLR Control Studio ist eine inoffizielle Third-Party-Anwendung und nicht
+mit TC-Helicon / Music Tribe oder dem GoXLR Utility Projekt affiliated.
+
+Ohne Utility kannst du in den Settings „Simulated Hardware“ aktivieren
+(Neustart erforderlich), um die UI zu testen.

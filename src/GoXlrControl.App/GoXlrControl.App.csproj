@@ -1,0 +1,31 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <ApplicationIcon />
+    <RootNamespace>GoXlrControl.App</RootNamespace>
+    <AssemblyName>GoXlrControlStudio</AssemblyName>
+    <Version>0.1.0</Version>
+    <Product>GoXLR Control Studio</Product>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+    <PackageReference Include="Hardcodet.NotifyIcon.Wpf" Version="1.1.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+    <PackageReference Include="System.Drawing.Common" Version="8.0.11" />
+    <PackageReference Include="Velopack" Version="0.0.1298" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\GoXlrControl.Hardware.Abstractions\GoXlrControl.Hardware.Abstractions.csproj" />
+    <ProjectReference Include="..\GoXlrControl.Hardware\GoXlrControl.Hardware.csproj" />
+    <ProjectReference Include="..\GoXlrControl.Engine\GoXlrControl.Engine.csproj" />
+    <ProjectReference Include="..\GoXlrControl.Audio\GoXlrControl.Audio.csproj" />
+    <ProjectReference Include="..\GoXlrControl.Integrations\GoXlrControl.Integrations.csproj" />
+    <ProjectReference Include="..\GoXlrControl.Config\GoXlrControl.Config.csproj" />
+    <ProjectReference Include="..\GoXlrControl.Diagnostics\GoXlrControl.Diagnostics.csproj" />
+  </ItemGroup>
+</Project>

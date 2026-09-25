@@ -1,0 +1,16 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>GoXlrControl.DiagHost</RootNamespace>
+    <ApplicationTitle>GoXLR Control Studio — Diagnostics</ApplicationTitle>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\GoXlrControl.Hardware\GoXlrControl.Hardware.csproj" />
+    <ProjectReference Include="..\..\src\GoXlrControl.Hardware.Abstractions\GoXlrControl.Hardware.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\GoXlrControl.Diagnostics\GoXlrControl.Diagnostics.csproj" />
+  </ItemGroup>
+</Project>

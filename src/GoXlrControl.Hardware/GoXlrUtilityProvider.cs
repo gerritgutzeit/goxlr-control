@@ -1,0 +1,233 @@
+using System.Text.Json.Nodes;
+using GoXlrControl.Hardware.Abstractions;
+using Microsoft.Extensions.Logging;
+
+namespace GoXlrControl.Hardware;
+
+public sealed class GoXlrUtilityProvider : IHardwareInputProvider
+{
+    private readonly ILogger<GoXlrUtilityProvider>? _logger;
+    private readonly bool _autoStartDaemon;
+    private readonly Dictionary<(string Serial, FaderId Fader), FaderSnapshot> _lastFaders = new();
+    private readonly Dictionary<(string Serial, HardwareButtonId Button), bool> _lastButtons = new();
+    private CancellationTokenSource? _runCts;
+    private Task? _runTask;
+    private WebSocketStatusClient? _ws;
+    private List<HardwareDeviceInfo> _devices = new();
+    private DateTimeOffset _nextAutoStartAttempt = DateTimeOffset.MinValue;
+
+    public GoXlrUtilityProvider(ILogger<GoXlrUtilityProvider>? logger = null, bool autoStartDaemon = true)
+    {
+        _logger = logger;
+        _autoStartDaemon = autoStartDaemon;
+    }
+
+    public HardwareConnectionState ConnectionState { get; private set; } = HardwareConnectionState.Disconnected;
+    public IReadOnlyList<HardwareDeviceInfo> Devices => _devices;
+
+    public event EventHandler<HardwareConnectionState>? ConnectionChanged;
+    public event EventHandler<FaderValueChanged>? FaderChanged;
+    public event EventHandler<ButtonStateChanged>? ButtonChanged;
+    public event EventHandler<string>? DiagnosticMessage;
+
+    public Task StartAsync(CancellationToken cancellationToken = default)
+    {
+        _runCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _runTask = Task.Run(() => RunAsync(_runCts.Token), CancellationToken.None);
+        return Task.CompletedTask;
+    }
+
+    public async Task StopAsync(CancellationToken cancellationToken = default)
+    {
+        _runCts?.Cancel();
+        if (_runTask is not null)
+            await Task.WhenAny(_runTask, Task.Delay(2000, cancellationToken)).ConfigureAwait(false);
+        if (_ws is not null)
+            await _ws.DisposeAsync().ConfigureAwait(false);
+        _ws = null;
+        SetState(HardwareConnectionState.Disconnected);
+    }
+
+    private async Task RunAsync(CancellationToken ct)
+    {
+        var delay = TimeSpan.FromMilliseconds(250);
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                if (UtilityDaemonLifecycle.IsOfficialAppRunning())
+                {
+                    SetState(HardwareConnectionState.OfficialAppConflict);
+                    Log("Offizielle GoXLR App erkannt — Utility kann nicht parallel laufen.");
+                    await Task.Delay(delay, ct).ConfigureAwait(false);
+                    delay = TimeSpan.FromSeconds(Math.Min(delay.TotalSeconds * 2, 10));
+                    continue;
+                }
+
+                if (!UtilityDaemonLifecycle.IsDaemonRunning())
+                {
+                    SetState(HardwareConnectionState.UtilityMissing);
+                    if (_autoStartDaemon && DateTimeOffset.UtcNow >= _nextAutoStartAttempt)
+                    {
+                        _nextAutoStartAttempt = DateTimeOffset.UtcNow.AddSeconds(30);
+                        var start = await UtilityDaemonLifecycle.TryStartDaemonAsync(
+                            cancellationToken: ct,
+                            log: Log).ConfigureAwait(false);
+                        if (start is UtilityStartResult.Started or UtilityStartResult.AlreadyRunning)
+                        {
+                            delay = TimeSpan.FromMilliseconds(250);
+                            continue;
+                        }
+
+                        if (start == UtilityStartResult.NotInstalled)
+                            Log("GoXLR Utility nicht installiert — Patcher in Settings/Wizard nutzen.");
+                        else
+                            Log("GoXLR Utility Daemon nicht gefunden.");
+                    }
+                    else
+                    {
+                        Log("GoXLR Utility Daemon nicht gefunden.");
+                    }
+
+                    await Task.Delay(delay, ct).ConfigureAwait(false);
+                    delay = TimeSpan.FromSeconds(Math.Min(delay.TotalSeconds * 2, 10));
+                    continue;
+                }
+
+                SetState(ConnectionState is HardwareConnectionState.Disconnected or HardwareConnectionState.UtilityMissing
+                    ? HardwareConnectionState.Connecting
+                    : HardwareConnectionState.Reconnecting);
+
+                await using var pipe = new NamedPipeTransport();
+                await pipe.ConnectAsync(NamedPipeTransport.DefaultPipeName, 2000, ct).ConfigureAwait(false);
+                var response = await pipe.GetStatusAsync(ct).ConfigureAwait(false);
+                var status = response["Status"] ?? response;
+                await PublishStatusAsync(status, isInitial: true, ct).ConfigureAwait(false);
+
+                if (!DaemonStatusParser.IsHttpEnabled(status))
+                {
+                    SetState(HardwareConnectionState.HttpDisabled);
+                    Log("Utility-HTTP/WebSocket deaktiviert — Pipe-Polling aktiv.");
+                    await PollPipeAsync(ct).ConfigureAwait(false);
+                    continue;
+                }
+
+                var (host, port) = DaemonStatusParser.GetHttpEndpoint(status);
+                var wsUri = new Uri($"ws://{host}:{port}/api/websocket");
+                _ws = new WebSocketStatusClient();
+                _ws.MessageLogged += (_, msg) => Log(msg);
+                _ws.StatusUpdated += (_, s) => _ = PublishStatusAsync(s, isInitial: false, CancellationToken.None);
+                var disconnected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                _ws.Disconnected += (_, _) => disconnected.TrySetResult();
+
+                await _ws.ConnectAsync(wsUri, ct).ConfigureAwait(false);
+                if (_devices.Count == 0)
+                    SetState(HardwareConnectionState.NoDevice);
+                else
+                    SetState(HardwareConnectionState.Connected);
+
+                delay = TimeSpan.FromMilliseconds(250);
+                await disconnected.Task.WaitAsync(ct).ConfigureAwait(false);
+                Log("WebSocket getrennt — Reconnect.");
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                Log($"Verbindungsfehler: {ex.Message}");
+                SetState(HardwareConnectionState.Reconnecting);
+                await Task.Delay(delay, ct).ConfigureAwait(false);
+                delay = TimeSpan.FromSeconds(Math.Min(Math.Max(delay.TotalSeconds * 2, 0.5), 10));
+            }
+            finally
+            {
+                if (_ws is not null)
+                {
+                    await _ws.DisposeAsync().ConfigureAwait(false);
+                    _ws = null;
+                }
+            }
+        }
+    }
+
+    private async Task PollPipeAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await using var pipe = new NamedPipeTransport();
+                await pipe.ConnectAsync(ct: ct).ConfigureAwait(false);
+                var response = await pipe.GetStatusAsync(ct).ConfigureAwait(false);
+                var status = response["Status"] ?? response;
+                await PublishStatusAsync(status, isInitial: false, ct).ConfigureAwait(false);
+                if (_devices.Count == 0)
+                    SetState(HardwareConnectionState.NoDevice);
+                else
+                    SetState(HardwareConnectionState.HttpDisabled);
+            }
+            catch (Exception ex)
+            {
+                Log($"Pipe-Poll Fehler: {ex.Message}");
+                throw;
+            }
+
+            await Task.Delay(100, ct).ConfigureAwait(false);
+        }
+    }
+
+    private Task PublishStatusAsync(JsonNode status, bool isInitial, CancellationToken ct)
+    {
+        _devices = DaemonStatusParser.ParseDevices(status).ToList();
+        var now = DateTimeOffset.UtcNow;
+
+        foreach (var device in _devices)
+        {
+            foreach (var fader in DaemonStatusParser.ParseFaders(status, device.SerialNumber))
+            {
+                var key = (device.SerialNumber, fader.Fader);
+                if (!isInitial && _lastFaders.TryGetValue(key, out var prev) &&
+                    prev.RawVolume == fader.RawVolume && prev.ChannelName == fader.ChannelName)
+                    continue;
+
+                _lastFaders[key] = fader;
+                FaderChanged?.Invoke(this, new FaderValueChanged(
+                    device.SerialNumber, fader.Fader, fader.ChannelName,
+                    fader.Normalized, fader.RawVolume, now, isInitial));
+            }
+
+            foreach (var button in DaemonStatusParser.ParseButtons(status, device.SerialNumber))
+            {
+                var key = (device.SerialNumber, button.Button);
+                if (!isInitial && _lastButtons.TryGetValue(key, out var prev) && prev == button.IsPressed)
+                    continue;
+
+                _lastButtons[key] = button.IsPressed;
+                ButtonChanged?.Invoke(this, new ButtonStateChanged(
+                    device.SerialNumber, button.Button, button.IsPressed, now, isInitial));
+            }
+        }
+
+        if (!isInitial && _devices.Count == 0 && ConnectionState == HardwareConnectionState.Connected)
+            SetState(HardwareConnectionState.NoDevice);
+
+        return Task.CompletedTask;
+    }
+
+    private void SetState(HardwareConnectionState state)
+    {
+        if (ConnectionState == state) return;
+        ConnectionState = state;
+        ConnectionChanged?.Invoke(this, state);
+    }
+
+    private void Log(string message)
+    {
+        _logger?.LogInformation("{Message}", message);
+        DiagnosticMessage?.Invoke(this, message);
+    }
+
+    public async ValueTask DisposeAsync() => await StopAsync().ConfigureAwait(false);
+}

@@ -1,0 +1,35 @@
+﻿<Window x:Class="GoXlrControl.DiagHost.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="GoXLR Control Studio — Diagnostics"
+        Height="720" Width="980"
+        Background="#12141A" Foreground="#E8ECF1"
+        WindowStartupLocation="CenterScreen">
+  <DockPanel Margin="16">
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,12">
+      <Button x:Name="StartButton" Content="Start" Width="100" Margin="0,0,8,0" Click="Start_Click"/>
+      <Button x:Name="StopButton" Content="Stop" Width="100" Margin="0,0,8,0" Click="Stop_Click" IsEnabled="False"/>
+      <Button Content="Simulate Sweep" Width="120" Margin="0,0,8,0" Click="Simulate_Click"/>
+      <Button Content="Export Log" Width="100" Click="Export_Click"/>
+      <TextBlock x:Name="StatusText" VerticalAlignment="Center" Margin="16,0,0,0" FontWeight="SemiBold"/>
+    </StackPanel>
+    <Grid>
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="2*"/>
+        <ColumnDefinition Width="3*"/>
+      </Grid.ColumnDefinitions>
+      <StackPanel Grid.Column="0" Margin="0,0,12,0">
+        <TextBlock Text="Device" FontSize="16" FontWeight="Bold" Margin="0,0,0,8"/>
+        <TextBlock x:Name="DeviceText" TextWrapping="Wrap" Margin="0,0,0,16"/>
+        <TextBlock Text="Faders" FontSize="16" FontWeight="Bold" Margin="0,0,0,8"/>
+        <TextBlock x:Name="FaderText" FontFamily="Consolas" TextWrapping="Wrap"/>
+        <TextBlock Text="Last Button" FontSize="16" FontWeight="Bold" Margin="0,16,0,8"/>
+        <TextBlock x:Name="ButtonText" FontFamily="Consolas"/>
+      </StackPanel>
+      <DockPanel Grid.Column="1">
+        <TextBlock DockPanel.Dock="Top" Text="Event Log" FontSize="16" FontWeight="Bold" Margin="0,0,0,8"/>
+        <ListBox x:Name="LogList" Background="#1A1D26" BorderBrush="#2A2F3A" FontFamily="Consolas" FontSize="12"/>
+      </DockPanel>
+    </Grid>
+  </DockPanel>
+</Window>
