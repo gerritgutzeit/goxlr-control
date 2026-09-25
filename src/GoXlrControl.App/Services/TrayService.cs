@@ -30,7 +30,12 @@ public sealed class TrayService : IDisposable
             try { _icon.Icon = System.Drawing.SystemIcons.Application; } catch { /* Icon optional */ }
         }
 
-        var menu = new System.Windows.Controls.ContextMenu();
+        var menu = new System.Windows.Controls.ContextMenu
+        {
+            Background = (System.Windows.Media.Brush)Application.Current.FindResource("PanelBrush"),
+            Foreground = (System.Windows.Media.Brush)Application.Current.FindResource("TextBrush"),
+            BorderBrush = (System.Windows.Media.Brush)Application.Current.FindResource("BorderBrushKey")
+        };
         menu.Items.Add(CreateItem("Öffnen", (_, _) => ShowMain()));
         menu.Items.Add(CreateItem("Controller pausieren/fortsetzen", (_, _) => TogglePause()));
         menu.Items.Add(new System.Windows.Controls.Separator());
@@ -57,7 +62,11 @@ public sealed class TrayService : IDisposable
 
     private static System.Windows.Controls.MenuItem CreateItem(string header, RoutedEventHandler handler)
     {
-        var item = new System.Windows.Controls.MenuItem { Header = header };
+        var item = new System.Windows.Controls.MenuItem
+        {
+            Header = header,
+            Foreground = (System.Windows.Media.Brush)Application.Current.FindResource("TextBrush")
+        };
         item.Click += handler;
         return item;
     }
