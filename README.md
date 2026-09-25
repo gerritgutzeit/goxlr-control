@@ -1,6 +1,10 @@
+<p align="center">
+  <img src="docs/assets/header.png" alt="GoXLR Control Studio — Turn your GoXLR Mini into a powerful control surface for Windows." width="100%"/>
+</p>
+
 # GoXLR Control Studio
 
-Inoffizielle Windows-Desktop-Anwendung, die eine **TC-Helicon GoXLR Mini** über die [GoXLR Utility](https://github.com/GoXLR-on-Linux/goxlr-utility) als programmierbaren Hardware-Controller nutzt.
+Inoffizielle Windows-Desktop-App, die eine **TC-Helicon GoXLR Mini** über die [GoXLR Utility](https://github.com/GoXLR-on-Linux/goxlr-utility) als programmierbare Control Surface nutzt — Fader, Buttons und Mute-Tasten für System-Audio, Apps und eigene Aktionen.
 
 > Nicht affiliated mit TC-Helicon / Music Tribe oder dem GoXLR Utility Projekt.
 
@@ -8,7 +12,8 @@ Inoffizielle Windows-Desktop-Anwendung, die eine **TC-Helicon GoXLR Mini** über
 
 - Fader steuern Windows-Master- und Anwendungs-Lautstärke
 - Buttons lösen Mute, Media-Keys, Shortcuts (z. B. Discord Mute/Deafen) aus
-- Profile lokal speichern
+- LED-Feedback am Gerät (Status / Peak-Proxy, optional exklusiv)
+- Profile lokal speichern; Auto-Update über Velopack (GitHub Releases)
 - **Kein** Audio-Routing über die GoXLR erforderlich
 
 ## Voraussetzungen
@@ -17,7 +22,12 @@ Inoffizielle Windows-Desktop-Anwendung, die eine **TC-Helicon GoXLR Mini** über
 2. Offizielle GoXLR-Treiber (bereits vorhanden, wenn Official App je installiert war)
 3. [GoXLR Utility 1.2.4+](https://github.com/GoXLR-on-Linux/goxlr-utility/releases) — **nicht** parallel zur Official App  
    Die App kann die Utility selbst installieren (winget → GitHub-Installer) und den Daemon automatisch starten. Die Utility-UI musst du nicht manuell öffnen.
-4. .NET 8 (bei self-contained Build nicht nötig)
+4. .NET 8 (bei self-contained Build / Setup.exe nicht nötig)
+
+## Installation (Release)
+
+1. Neueste **Setup.exe** von [Releases](https://github.com/gerritgutzeit/goxlr-control/releases) laden (`GoXlrControlStudio-win-Setup.exe`)
+2. Installieren — Updates erscheinen danach in der App als **Update**-Button
 
 ## Schnellstart (Entwicklung)
 
@@ -49,8 +59,7 @@ Legacy ohne Updater: Inno Setup 6 mit `packaging/GoXlrControlStudio.iss`.
 
 - GoXLR Utility und offizielle GoXLR App schließen sich gegenseitig aus.
 - Fader liefern Channel-Volumen (0–255), keine Rohachsen.
-- Discord Mute/Deafen = `IDiscordIntegration` FALLBACK (Shortcut „Command sent“); bestätigter State nur nach Discord-Approval (HYBRID/NATIVE).
-- Physische Hardware-Validierung steht lokal noch aus, solange Utility nicht installiert ist (siehe `docs/testing/hardware-validation.md`).
+- Discord Mute/Deafen = `IDiscordIntegration` FALLBACK (Shortcut); bestätigter State nur nach Discord-Approval (HYBRID/NATIVE).
 - Lighting / OBS / Auto-Profile-Switch sind Post-MVP.
 
 ## Dokumentation
