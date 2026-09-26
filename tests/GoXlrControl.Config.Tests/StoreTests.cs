@@ -67,12 +67,41 @@ public class ProfileStoreTests
             var s = store.Load();
             s.CloseToTray.Should().BeTrue();
             s.SyncModeDefault.Should().Be(SyncMode.SoftTakeover);
-            s.SchemaVersion.Should().Be(2);
+            s.SchemaVersion.Should().Be(3);
             s.DiscordMuteChord.Should().Be("Ctrl+Shift+M");
         }
         finally
         {
             Directory.Delete(root, true);
         }
+    }
+
+    [Fact]
+    public void ProfileStore_DefaultFadersHaveAccentColours()
+    {
+        var profile = ControllerProfile.CreateDefault();
+        profile.Faders.Should().HaveCount(4);
+        profile.Faders[0].AccentColour.Should().Be("2EC4B6");
+        profile.Faders[1].AccentColour.Should().Be("5B9FD4");
+        profile.Faders[2].AccentColour.Should().Be("E07A5F");
+        profile.Faders[3].AccentColour.Should().Be("C9A227");
+    }
+
+    [Fact]
+    public void MigrateProfile_FillsMissingAccentColours()
+    {
+        var profile = new ControllerProfile
+        {
+            SchemaVersion = 2,
+            Faders =
+            [
+                new FaderBinding { FaderId = "A", AccentColour = null },
+                new FaderBinding { FaderId = "B", AccentColour = "not-hex" }
+            ]
+        };
+        SchemaMigrator.MigrateProfile(profile);
+        profile.SchemaVersion.Should().Be(3);
+        profile.Faders[0].AccentColour.Should().Be("2EC4B6");
+        profile.Faders[1].AccentColour.Should().Be("5B9FD4");
     }
 }

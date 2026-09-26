@@ -59,7 +59,7 @@ public enum DiscordIntegrationMode
 
 public sealed class AppSettings
 {
-    public int SchemaVersion { get; set; } = 2;
+    public int SchemaVersion { get; set; } = 3;
     public bool StartWithWindows { get; set; }
     public bool StartMinimized { get; set; }
     public bool CloseToTray { get; set; } = true;
@@ -117,6 +117,54 @@ public sealed class FaderBinding
     public string Curve { get; set; } = "Linear";
     public SyncMode SyncMode { get; set; } = SyncMode.SoftTakeover;
     public double DeadZone { get; set; } = 0.02;
+    /// <summary>GoXLR LED accent as RRGGBB (no #). Empty → <see cref="FaderAccentColours.DefaultFor"/>.</summary>
+    public string? AccentColour { get; set; }
+}
+
+/// <summary>Default / preset LED colours for fader identity (RRGGBB).</summary>
+public static class FaderAccentColours
+{
+    public static readonly string[] Presets =
+    [
+        "2EC4B6", // teal
+        "5B9FD4", // sky
+        "81B29A", // sage
+        "C9A227", // gold
+        "E07A5F", // coral
+        "E85D4C", // red
+        "F4A261", // apricot
+        "6C8EAD", // steel
+        "A8DADC", // mist
+        "E9C46A", // sand
+        "264653", // deep teal
+        "E8ECF1"  // light
+    ];
+
+    public static string DefaultFor(string faderId) => faderId.Trim().ToUpperInvariant() switch
+    {
+        "A" => "2EC4B6",
+        "B" => "5B9FD4",
+        "C" => "E07A5F",
+        "D" => "C9A227",
+        _ => "2EC4B6"
+    };
+
+    public static string Resolve(FaderBinding binding) =>
+        Normalize(binding.AccentColour) ?? DefaultFor(binding.FaderId);
+
+    public static string? Normalize(string? hex)
+    {
+        if (string.IsNullOrWhiteSpace(hex)) return null;
+        hex = hex.Trim().TrimStart('#');
+        if (hex.Length != 6) return null;
+        foreach (var c in hex)
+        {
+            var isHex = c is (>= '0' and <= '9') or (>= 'a' and <= 'f') or (>= 'A' and <= 'F');
+            if (!isHex) return null;
+        }
+
+        return hex.ToUpperInvariant();
+    }
 }
 
 public sealed class ActionRef
@@ -135,7 +183,7 @@ public sealed class ButtonBinding
 
 public sealed class ControllerProfile
 {
-    public int SchemaVersion { get; set; } = 2;
+    public int SchemaVersion { get; set; } = 3;
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string Name { get; set; } = "Default";
     public string Description { get; set; } = string.Empty;
@@ -147,10 +195,10 @@ public sealed class ControllerProfile
     public static List<FaderBinding> CreateDefaultFaders() =>
     [
         // Absolute: SoftTakeover felt "broken" for Master until the physical fader crossed Windows volume.
-        new() { FaderId = "A", Label = "Master", Target = new() { Kind = FaderTargetKind.MasterVolume }, SyncMode = SyncMode.Absolute },
-        new() { FaderId = "B", Label = "App 1", Target = new() { Kind = FaderTargetKind.None } },
-        new() { FaderId = "C", Label = "App 2", Target = new() { Kind = FaderTargetKind.None } },
-        new() { FaderId = "D", Label = "Music", Target = new() { Kind = FaderTargetKind.None } }
+        new() { FaderId = "A", Label = "Master", Target = new() { Kind = FaderTargetKind.MasterVolume }, SyncMode = SyncMode.Absolute, AccentColour = FaderAccentColours.DefaultFor("A") },
+        new() { FaderId = "B", Label = "App 1", Target = new() { Kind = FaderTargetKind.None }, AccentColour = FaderAccentColours.DefaultFor("B") },
+        new() { FaderId = "C", Label = "App 2", Target = new() { Kind = FaderTargetKind.None }, AccentColour = FaderAccentColours.DefaultFor("C") },
+        new() { FaderId = "D", Label = "Music", Target = new() { Kind = FaderTargetKind.None }, AccentColour = FaderAccentColours.DefaultFor("D") }
     ];
 
     public static List<ButtonBinding> CreateDefaultButtons() =>

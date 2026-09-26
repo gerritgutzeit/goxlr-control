@@ -68,7 +68,7 @@ public sealed class AppBootstrapper
         await _discord.StartAsync().ConfigureAwait(false);
         _lighting.Start();
         _lighting.DiagnosticsChanged += (_, _) => { /* UI binds via service */ };
-        ApplyAutostart(_settings.StartWithWindows);
+        ApplyAutostart(_settings.StartWithWindows, userInitiated: false);
         SystemEvents.PowerModeChanged += OnPowerModeChanged;
         _log.Info($"Bootstrap abgeschlossen. Discord-Modus: {_discord.Mode}.");
         Changed?.Invoke(this, EventArgs.Empty);
@@ -96,8 +96,19 @@ public sealed class AppBootstrapper
         _log.SetMinimumLevel(settings.LogLevel);
         _audio.Configure(settings.FollowDefaultPlayback, settings.SelectedPlaybackDeviceId);
         _engine.IsPaused = settings.ControllerPaused;
-        ApplyAutostart(settings.StartWithWindows);
+        ApplyAutostart(settings.StartWithWindows, userInitiated: false);
         Changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// Persists the autostart flag immediately. The settings checkbox used to wait for Speichern,
+    /// so closing the window (tray) dropped the choice before any login entry was written.
+    /// </summary>
+    public string SetStartWithWindows(bool enabled)
+    {
+        _settings.StartWithWindows = enabled;
+        _settingsStore.Save(_settings);
+        return ApplyAutostart(enabled, userInitiated: true);
     }
 
     public void ReloadProfiles()
@@ -135,21 +146,13 @@ public sealed class AppBootstrapper
         }
     }
 
-    private static void ApplyAutostart(bool enabled)
+    private string ApplyAutostart(bool enabled, bool userInitiated)
     {
-        const string runKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
-        using var key = Registry.CurrentUser.OpenSubKey(runKey, writable: true) ??
-                        Registry.CurrentUser.CreateSubKey(runKey);
-        const string name = "GoXlrControlStudio";
-        if (enabled)
-        {
-            var exe = Environment.ProcessPath;
-            if (!string.IsNullOrEmpty(exe))
-                key.SetValue(name, $"\"{exe}\"");
-        }
-        else if (key.GetValue(name) is not null)
-        {
-            key.DeleteValue(name, false);
-        }
+        var (ok, message) = WindowsAutostart.Apply(enabled, userInitiated);
+        if (!ok)
+            _log.Warn(message);
+        else if (userInitiated || enabled)
+            _log.Info(message);
+        return message;
     }
 }

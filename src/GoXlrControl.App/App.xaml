@@ -4,6 +4,7 @@
              xmlns:local="clr-namespace:GoXlrControl.App">
   <Application.Resources>
     <local:PageVisibilityConverter x:Key="PageVis"/>
+    <local:HexToBrushConverter x:Key="HexBrush"/>
 
     <Color x:Key="BgColor">#0F1115</Color>
     <Color x:Key="PanelColor">#171A21</Color>
@@ -375,6 +376,79 @@
       <Setter Property="Width" Value="8"/>
       <Setter Property="Foreground" Value="#5B6B7C"/>
       <Setter Property="Opacity" Value="0.9"/>
+    </Style>
+
+    <Style x:Key="ColourChipButton" TargetType="Button">
+      <Setter Property="Width" Value="28"/>
+      <Setter Property="Height" Value="28"/>
+      <Setter Property="Margin" Value="0,0,8,8"/>
+      <Setter Property="Padding" Value="0"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="BorderThickness" Value="2"/>
+      <Setter Property="BorderBrush" Value="Transparent"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Bd"
+                    Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}"
+                    CornerRadius="14"
+                    Width="{TemplateBinding Width}"
+                    Height="{TemplateBinding Height}">
+              <Border.Effect>
+                <DropShadowEffect BlurRadius="8" ShadowDepth="0" Opacity="0.35" Color="#000000"/>
+              </Border.Effect>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Bd" Property="BorderBrush" Value="#E8ECF1"/>
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="Bd" Property="Opacity" Value="0.85"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style x:Key="ColourSlider" TargetType="Slider">
+      <Setter Property="Height" Value="24"/>
+      <Setter Property="Margin" Value="0,0,0,12"/>
+      <Setter Property="IsMoveToPointEnabled" Value="True"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Slider">
+            <Grid VerticalAlignment="Center" MinHeight="24">
+              <Border Height="10" CornerRadius="5" Margin="6,0"
+                      Background="{TemplateBinding Background}"
+                      BorderBrush="#2A303C" BorderThickness="1"/>
+              <Track x:Name="PART_Track">
+                <Track.DecreaseRepeatButton>
+                  <RepeatButton Command="Slider.DecreaseLarge" Opacity="0" Focusable="False"/>
+                </Track.DecreaseRepeatButton>
+                <Track.IncreaseRepeatButton>
+                  <RepeatButton Command="Slider.IncreaseLarge" Opacity="0" Focusable="False"/>
+                </Track.IncreaseRepeatButton>
+                <Track.Thumb>
+                  <Thumb Width="18" Height="18" Focusable="False">
+                    <Thumb.Template>
+                      <ControlTemplate TargetType="Thumb">
+                        <Ellipse Fill="#F2F5F8" Stroke="#0F1115" StrokeThickness="2">
+                          <Ellipse.Effect>
+                            <DropShadowEffect BlurRadius="8" ShadowDepth="1" Opacity="0.45" Color="#000000"/>
+                          </Ellipse.Effect>
+                        </Ellipse>
+                      </ControlTemplate>
+                    </Thumb.Template>
+                  </Thumb>
+                </Track.Thumb>
+              </Track>
+            </Grid>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
     </Style>
   </Application.Resources>
 </Application>

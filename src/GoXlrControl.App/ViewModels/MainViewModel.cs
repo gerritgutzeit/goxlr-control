@@ -24,6 +24,7 @@ public partial class MainViewModel : ObservableObject
     private readonly UpdateService _updates;
     private readonly LightingFeedbackService _lighting;
     private readonly IDiscordIntegration _discord;
+    private int _settingsSync;
 
     public MainViewModel(
         AppBootstrapper bootstrap,
@@ -126,6 +127,7 @@ public partial class MainViewModel : ObservableObject
     public ObservableCollection<AudioEndpointInfo> Endpoints { get; } = new();
     public ObservableCollection<AudioSessionInfo> Sessions { get; } = new();
     public ObservableCollection<ButtonVm> Buttons { get; } = new();
+    public IReadOnlyList<string> FaderColourPresets { get; } = FaderAccentColours.Presets;
 
     [ObservableProperty] private string connectionState = "Disconnected";
     [ObservableProperty] private string deviceSummary = "—";
@@ -160,6 +162,60 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private FaderVm? selectedFader;
     [ObservableProperty] private ButtonVm? selectedButton;
     [ObservableProperty] private AudioSessionInfo? selectedSession;
+    [ObservableProperty] private double colourHue;
+    [ObservableProperty] private double colourSaturation = 0.65;
+    [ObservableProperty] private double colourValue = 0.78;
+    [ObservableProperty] private string colourHexInput = "2EC4B6";
+    [ObservableProperty] private System.Windows.Media.Brush colourPreviewBrush =
+        new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x2E, 0xC4, 0xB6));
+    [ObservableProperty] private System.Windows.Media.Brush colourHueBrush =
+        new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x2E, 0xC4, 0xB6));
+
+    private int _colourPickerSync;
+
+    partial void OnSelectedFaderChanged(FaderVm? value) => SyncColourPickerFromFader(value);
+
+    partial void OnColourHueChanged(double value) => ApplyColourPickerToFader();
+    partial void OnColourSaturationChanged(double value) => ApplyColourPickerToFader();
+    partial void OnColourValueChanged(double value) => ApplyColourPickerToFader();
+
+    private void SyncColourPickerFromFader(FaderVm? fader)
+    {
+        if (fader is null) return;
+        _colourPickerSync++;
+        try
+        {
+            if (!ColourSpace.TryParseHex(fader.AccentColour, out var color))
+                color = System.Windows.Media.Color.FromRgb(0x2E, 0xC4, 0xB6);
+            ColourSpace.ToHsv(color, out var h, out var s, out var v);
+            ColourHue = h;
+            ColourSaturation = s;
+            ColourValue = v;
+            ColourHexInput = fader.AccentColour;
+            UpdateColourPreview(color);
+        }
+        finally
+        {
+            _colourPickerSync--;
+        }
+    }
+
+    private void ApplyColourPickerToFader()
+    {
+        if (_colourPickerSync > 0 || SelectedFader is null) return;
+        var color = ColourSpace.FromHsv(ColourHue, ColourSaturation, ColourValue);
+        var hex = ColourSpace.ToHex(color);
+        ColourHexInput = hex;
+        UpdateColourPreview(color);
+        PersistFaderAccent(hex);
+    }
+
+    private void UpdateColourPreview(System.Windows.Media.Color color)
+    {
+        ColourPreviewBrush = new System.Windows.Media.SolidColorBrush(color);
+        ColourHueBrush = new System.Windows.Media.SolidColorBrush(
+            ColourSpace.FromHsv(ColourHue, 1, 1));
+    }
 
     [RelayCommand]
     private void Navigate(string page) => SelectedPage = page;
@@ -247,6 +303,45 @@ public partial class MainViewModel : ObservableObject
         _profiles.Save(SelectedProfile);
         _engine.SetProfile(SelectedProfile);
         StatusMessage = $"{SelectedFader.HardwareLabel} Sync = {binding.SyncMode}";
+    }
+
+    [RelayCommand]
+    private void SetFaderAccentColour(string hex)
+    {
+        var normalized = FaderAccentColours.Normalize(hex);
+        if (normalized is null || SelectedFader is null) return;
+        PersistFaderAccent(normalized);
+        SyncColourPickerFromFader(SelectedFader);
+        StatusMessage = $"{SelectedFader.HardwareLabel} Farbe = #{normalized}";
+    }
+
+    [RelayCommand]
+    private void ApplyFaderColourHex()
+    {
+        var normalized = FaderAccentColours.Normalize(ColourHexInput);
+        if (normalized is null)
+        {
+            StatusMessage = "Farbe ungültig — bitte RRGGBB eingeben (z.B. 2EC4B6).";
+            return;
+        }
+
+        SetFaderAccentColour(normalized);
+    }
+
+    private void PersistFaderAccent(string hex)
+    {
+        if (SelectedFader is null || SelectedProfile is null) return;
+        var binding = SelectedProfile.Faders.FirstOrDefault(f => f.FaderId == SelectedFader.Id);
+        if (binding is null) return;
+        if (string.Equals(binding.AccentColour, hex, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(SelectedFader.AccentColour, hex, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        binding.AccentColour = hex;
+        SelectedFader.ApplyAccent(hex);
+        _profiles.Save(SelectedProfile);
+        _engine.SetProfile(SelectedProfile);
+        _lighting.InvalidateColours();
     }
 
     [RelayCommand]
@@ -380,6 +475,19 @@ public partial class MainViewModel : ObservableObject
         RefreshProfiles();
     }
 
+    partial void OnStartWithWindowsChanged(bool value)
+    {
+        if (_settingsSync > 0) return;
+        try
+        {
+            StatusMessage = _bootstrap.SetStartWithWindows(value);
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Autostart fehlgeschlagen: {ex.Message}";
+        }
+    }
+
     [RelayCommand]
     private void SaveSettings()
     {
@@ -477,6 +585,19 @@ public partial class MainViewModel : ObservableObject
 
     private void RefreshAll()
     {
+        _settingsSync++;
+        try
+        {
+            RefreshAllCore();
+        }
+        finally
+        {
+            _settingsSync--;
+        }
+    }
+
+    private void RefreshAllCore()
+    {
         RefreshDevice();
         RefreshProfiles();
         RefreshSessions();
@@ -550,6 +671,7 @@ public partial class MainViewModel : ObservableObject
                                x.Id.Equals(previousId, StringComparison.OrdinalIgnoreCase))
                        ?? SelectedFader
                        ?? Faders.FirstOrDefault();
+        SyncColourPickerFromFader(SelectedFader);
     }
 
     private void ApplyDiscordSnapshot(DiscordVoiceSnapshot snap)

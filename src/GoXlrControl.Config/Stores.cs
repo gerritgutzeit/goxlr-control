@@ -166,7 +166,7 @@ public sealed class ProfileStore
 
 public static class SchemaMigrator
 {
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
 
     public static void MigrateSettings(AppSettings settings)
     {
@@ -180,6 +180,9 @@ public static class SchemaMigrator
                 settings.DiscordDeafenChord = "Ctrl+Shift+D";
             settings.SchemaVersion = 2;
         }
+
+        if (settings.SchemaVersion < 3)
+            settings.SchemaVersion = 3;
     }
 
     public static void MigrateProfile(ControllerProfile profile)
@@ -202,6 +205,17 @@ public static class SchemaMigrator
             }
 
             profile.SchemaVersion = 2;
+        }
+
+        if (profile.SchemaVersion < 3)
+        {
+            foreach (var fader in profile.Faders)
+            {
+                if (FaderAccentColours.Normalize(fader.AccentColour) is null)
+                    fader.AccentColour = FaderAccentColours.DefaultFor(fader.FaderId);
+            }
+
+            profile.SchemaVersion = 3;
         }
     }
 }

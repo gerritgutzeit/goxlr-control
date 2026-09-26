@@ -116,6 +116,9 @@ public sealed class LightingFeedbackService : IAsyncDisposable
 
     private void OnDiscordStateChanged(object? sender, DiscordVoiceSnapshot _) => RequestForceRewrite();
 
+    /// <summary>Force the next lighting tick to rewrite all colours (e.g. after accent change).</summary>
+    public void InvalidateColours() => RequestForceRewrite();
+
     private void RequestForceRewrite()
     {
         Interlocked.Exchange(ref _forceFullRewrite, 1);
@@ -319,15 +322,17 @@ public sealed class LightingFeedbackService : IAsyncDisposable
         if (pending)
             return ("E8A317", "4A3A10", style, 0);
 
+        var accent = FaderAccentColours.Resolve(binding);
+
         if (settings.LightingMode == LightingMode.PeakProxy)
         {
             var peak = await ResolvePeakAsync(binding).ConfigureAwait(false);
-            var (c1, c2) = PeakToColours(peak);
+            var (c1, c2) = PeakToColours(peak, accent);
             return (c1, c2, FaderDisplayStyle.Gradient, peak);
         }
 
-        // Status: mapped / active
-        return ("2EC4B6", "0F3D38", style, 0);
+        // Status: mapped / active — use the user-chosen fader colour.
+        return (accent, Darken(accent), style, 0);
     }
 
     private async Task UpdateMuteButtonLightsAsync(
@@ -353,7 +358,7 @@ public sealed class LightingFeedbackService : IAsyncDisposable
                 ? "E85D4C"
                 : binding.Target.Kind == FaderTargetKind.None
                     ? "3A3F4A"
-                    : "2EC4B6";
+                    : FaderAccentColours.Resolve(binding);
 
             await WriteButtonColourAsync(button, colour, exclusive, force, ct).ConfigureAwait(false);
         }
@@ -463,15 +468,35 @@ public sealed class LightingFeedbackService : IAsyncDisposable
     }
 
     /// <summary>
-    /// Maps peak 0..1 to two RRGGBB colours (dim teal → bright teal → red clip).
+    /// Maps peak 0..1 to two RRGGBB colours.
+    /// Without <paramref name="accentHex"/>: dim teal → bright teal → red clip.
+    /// With accent: dim accent → full accent → red clip (so each fader stays recognizable).
     /// </summary>
-    public static (string C1, string C2) PeakToColours(double peak)
+    public static (string C1, string C2) PeakToColours(double peak, string? accentHex = null)
     {
         peak = Math.Clamp(peak, 0, 1);
-        // perceptual-ish curve
         var level = Math.Pow(peak, 0.6);
         byte r, g, b;
-        if (level < 0.85)
+
+        if (FaderAccentColours.Normalize(accentHex) is { } accent &&
+            TryParseRgb(accent, out var ar, out var ag, out var ab))
+        {
+            if (level < 0.85)
+            {
+                var t = level / 0.85;
+                r = (byte)((ar / 4) + t * (ar - ar / 4));
+                g = (byte)((ag / 4) + t * (ag - ag / 4));
+                b = (byte)((ab / 4) + t * (ab - ab / 4));
+            }
+            else
+            {
+                var t = (level - 0.85) / 0.15;
+                r = (byte)(ar + t * (232 - ar));
+                g = (byte)(ag + t * (93 - ag));
+                b = (byte)(ab + t * (76 - ab));
+            }
+        }
+        else if (level < 0.85)
         {
             var t = level / 0.85;
             r = (byte)(14 + t * (46 - 14));

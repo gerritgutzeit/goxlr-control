@@ -1,3 +1,4 @@
+using System.Windows.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
 using GoXlrControl.Config;
 
@@ -10,6 +11,7 @@ public partial class FaderVm : ObservableObject
         Id = id;
         HardwareLabel = DescribeHardwareLabel(id);
         HardwareHint = DescribeHardwareHint(id, "—");
+        ApplyAccent(FaderAccentColours.DefaultFor(id));
     }
 
     public string Id { get; }
@@ -26,6 +28,9 @@ public partial class FaderVm : ObservableObject
     [ObservableProperty] private string hardwareHint = "";
     [ObservableProperty] private string targetTitle = "";
     [ObservableProperty] private string targetDetail = "";
+    [ObservableProperty] private string accentColour = "2EC4B6";
+    [ObservableProperty] private Brush accentBrush = Brushes.Teal;
+    [ObservableProperty] private Brush accentDimBrush = Brushes.DarkSlateGray;
 
     public void RefreshFrom(FaderBinding binding)
     {
@@ -36,10 +41,32 @@ public partial class FaderVm : ObservableObject
         TargetSummary = TargetTitle;
         TargetDetail = DescribeTargetDetail(binding);
         SyncMode = binding.SyncMode.ToString();
+        ApplyAccent(FaderAccentColours.Resolve(binding));
+    }
+
+    public void ApplyAccent(string hex)
+    {
+        var resolved = FaderAccentColours.Normalize(hex) ?? FaderAccentColours.DefaultFor(Id);
+        AccentColour = resolved;
+        var color = ParseColor(resolved);
+        AccentBrush = new SolidColorBrush(color);
+        AccentDimBrush = new SolidColorBrush(Color.FromRgb(
+            (byte)(color.R / 3),
+            (byte)(color.G / 3),
+            (byte)(color.B / 3)));
     }
 
     partial void OnChannelChanged(string value) =>
         HardwareHint = DescribeHardwareHint(Id, value);
+
+    private static Color ParseColor(string hex)
+    {
+        hex = hex.Trim().TrimStart('#');
+        return Color.FromRgb(
+            Convert.ToByte(hex[..2], 16),
+            Convert.ToByte(hex[2..4], 16),
+            Convert.ToByte(hex[4..6], 16));
+    }
 
     private static string DescribeHardwareLabel(string faderId) => $"Fader {faderId}";
 

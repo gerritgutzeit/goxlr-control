@@ -1,4 +1,5 @@
-﻿using System.Windows;
+﻿using System.IO;
+using System.Windows;
 using GoXlrControl.Abstractions;
 using GoXlrControl.App.Services;
 using GoXlrControl.App.ViewModels;
@@ -26,6 +27,10 @@ public partial class App : Application
     {
         // Must run before WPF startup so Velopack can handle update hooks with minimal overhead.
         VelopackApp.Build().Run();
+        // Login via the Run key starts the process with System32 as the working directory.
+        var exeDir = Path.GetDirectoryName(Environment.ProcessPath);
+        if (!string.IsNullOrEmpty(exeDir))
+            Directory.SetCurrentDirectory(exeDir);
 
         var app = new App();
         app.InitializeComponent();
