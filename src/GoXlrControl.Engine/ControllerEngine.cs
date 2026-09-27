@@ -25,6 +25,7 @@ public sealed class ControllerEngine : IAsyncDisposable
     private ControllerProfile _profile = ControllerProfile.CreateDefault();
     private bool _paused;
     private bool _started;
+    private CancellationTokenSource? _targetRefreshCts;
 
     public ControllerEngine(
         IHardwareInputProvider hardware,
@@ -77,6 +78,51 @@ public sealed class ControllerEngine : IAsyncDisposable
 
         ProfileChanged?.Invoke(this, EventArgs.Empty);
         DiagnosticMessage?.Invoke(this, $"Profil aktiv: {profile.Name}");
+        _ = RefreshTargetLevelsAsync();
+    }
+
+    /// <summary>
+    /// Reads current Windows volumes into <see cref="LastTargetValues"/> so the UI
+    /// shows live SW levels before any fader movement.
+    /// </summary>
+    public async Task RefreshTargetLevelsAsync(CancellationToken cancellationToken = default)
+    {
+        List<FaderBinding> bindings;
+        lock (_gate)
+            bindings = _profile.Faders.ToList();
+
+        foreach (var binding in bindings)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!Enum.TryParse<FaderId>(binding.FaderId, true, out var faderId))
+                continue;
+
+            if (binding.Target.Kind == FaderTargetKind.None)
+            {
+                _lastTarget.TryRemove(faderId, out _);
+                SoftTakeoverPendingChanged?.Invoke(this, faderId);
+                FaderOutputChanged?.Invoke(this, faderId);
+                continue;
+            }
+
+            double? current;
+            try
+            {
+                current = await ResolveCurrentTargetAsync(binding).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogDebug(ex, "Target-Level lesen fehlgeschlagen für {Fader}", faderId);
+                continue;
+            }
+
+            if (current is null)
+                continue;
+
+            _lastTarget[faderId] = current.Value;
+            SoftTakeoverPendingChanged?.Invoke(this, faderId);
+            FaderOutputChanged?.Invoke(this, faderId);
+        }
     }
 
     /// <summary>
@@ -89,6 +135,8 @@ public sealed class ControllerEngine : IAsyncDisposable
 
         foreach (var fader in Enum.GetValues<FaderId>())
             SoftTakeoverPendingChanged?.Invoke(this, fader);
+
+        _ = RefreshTargetLevelsAsync();
     }
 
     private void ResetSoftTakeoverLocked()
@@ -139,6 +187,8 @@ public sealed class ControllerEngine : IAsyncDisposable
             if (_paused || e.IsInitial)
             {
                 _lastHardware[e.Fader] = e.NormalizedValue;
+                if (e.IsInitial)
+                    ScheduleTargetRefresh();
                 return;
             }
 
@@ -258,6 +308,32 @@ public sealed class ControllerEngine : IAsyncDisposable
         }
     }
 
+    private void ScheduleTargetRefresh()
+    {
+        var cts = new CancellationTokenSource();
+        var previous = Interlocked.Exchange(ref _targetRefreshCts, cts);
+        try { previous?.Cancel(); } catch (ObjectDisposedException) { /* ignore */ }
+        previous?.Dispose();
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                // Wait until the initial fader snapshot for A–D has landed.
+                await Task.Delay(80, cts.Token).ConfigureAwait(false);
+                await RefreshTargetLevelsAsync(cts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // newer refresh scheduled
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogDebug(ex, "Target-Level-Refresh fehlgeschlagen");
+            }
+        }, CancellationToken.None);
+    }
+
     private async Task<double?> ResolveCurrentTargetAsync(FaderBinding binding)
     {
         return binding.Target.Kind switch
@@ -267,8 +343,22 @@ public sealed class ControllerEngine : IAsyncDisposable
                 await _volume.GetApplicationVolumeAsync(binding.Target.Application).ConfigureAwait(false),
             FaderTargetKind.Application when binding.Target.Application is not null =>
                 await _volume.GetApplicationVolumeAsync(binding.Target.Application).ConfigureAwait(false),
+            FaderTargetKind.ApplicationGroup => await ResolveGroupVolumeAsync(binding).ConfigureAwait(false),
             _ => null
         };
+    }
+
+    private async Task<double?> ResolveGroupVolumeAsync(FaderBinding binding)
+    {
+        double? max = null;
+        foreach (var identity in binding.Target.Applications)
+        {
+            var volume = await _volume.GetApplicationVolumeAsync(identity).ConfigureAwait(false);
+            if (volume is null) continue;
+            max = max is null ? volume : Math.Max(max.Value, volume.Value);
+        }
+
+        return max;
     }
 
     private Task ApplyVolumeAsync(FaderBinding binding, double value) =>
@@ -294,6 +384,9 @@ public sealed class ControllerEngine : IAsyncDisposable
     public ValueTask DisposeAsync()
     {
         Stop();
+        try { _targetRefreshCts?.Cancel(); } catch (ObjectDisposedException) { /* ignore */ }
+        _targetRefreshCts?.Dispose();
+        _targetRefreshCts = null;
         return ValueTask.CompletedTask;
     }
 

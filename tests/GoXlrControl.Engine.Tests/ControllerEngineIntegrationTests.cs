@@ -91,6 +91,47 @@ public class ControllerEngineIntegrationTests
         await engine.DisposeAsync();
     }
 
+    [Fact]
+    public async Task RefreshTargetLevels_PublishesWindowsVolumeWithoutWriting()
+    {
+        var hardware = new FakeHardware();
+        var volume = new RecordingVolumeSink { MasterVolume = 0.73 };
+        var engine = CreateEngine(hardware, volume, SyncMode.Absolute);
+        engine.Start();
+
+        var seen = new TaskCompletionSource<double>(TaskCreationOptions.RunContinuationsAsynchronously);
+        engine.FaderOutputChanged += (_, id) =>
+        {
+            if (id == FaderId.A && engine.LastTargetValues.TryGetValue(FaderId.A, out var v))
+                seen.TrySetResult(v);
+        };
+
+        await engine.RefreshTargetLevelsAsync();
+        var target = await seen.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        target.Should().BeApproximately(0.73, 0.01);
+        engine.LastTargetValues[FaderId.A].Should().BeApproximately(0.73, 0.01);
+        volume.MasterWrites.Should().BeEmpty();
+        await engine.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task InitialFaderSnapshot_SchedulesTargetRefresh()
+    {
+        var hardware = new FakeHardware();
+        var volume = new RecordingVolumeSink { MasterVolume = 0.42 };
+        var engine = CreateEngine(hardware, volume, SyncMode.SoftTakeover);
+        engine.Start();
+
+        hardware.RaiseFader(FaderId.A, 0.1, isInitial: true);
+        await Task.Delay(150);
+
+        engine.LastTargetValues.Should().ContainKey(FaderId.A);
+        engine.LastTargetValues[FaderId.A].Should().BeApproximately(0.42, 0.01);
+        volume.MasterWrites.Should().BeEmpty();
+        await engine.DisposeAsync();
+    }
+
     private static ControllerEngine CreateEngine(
         FakeHardware hardware, RecordingVolumeSink volume, SyncMode syncMode)
     {

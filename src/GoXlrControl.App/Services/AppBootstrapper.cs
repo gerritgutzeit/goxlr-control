@@ -68,6 +68,7 @@ public sealed class AppBootstrapper
         await _discord.StartAsync().ConfigureAwait(false);
         _lighting.Start();
         _lighting.DiagnosticsChanged += (_, _) => { /* UI binds via service */ };
+        await _engine.RefreshTargetLevelsAsync().ConfigureAwait(false);
         ApplyAutostart(_settings.StartWithWindows, userInitiated: false);
         SystemEvents.PowerModeChanged += OnPowerModeChanged;
         _log.Info($"Bootstrap abgeschlossen. Discord-Modus: {_discord.Mode}.");
