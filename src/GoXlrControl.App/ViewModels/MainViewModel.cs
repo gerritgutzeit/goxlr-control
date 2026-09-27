@@ -76,11 +76,11 @@ public partial class MainViewModel : ObservableObject
         _engine.FaderOutputChanged += (_, id) => _ = App.Current.Dispatcher.InvokeAsync(() =>
         {
             Faders[(int)id].TargetValue = _engine.LastTargetValues.TryGetValue(id, out var v) ? v : 0;
-            Faders[(int)id].SoftTakeoverPending = _engine.HasSoftTakeoverPending(id);
+            Faders[(int)id].SoftTakeoverPending = _engine.HasLevelDiscrepancy(id);
         });
         _engine.SoftTakeoverPendingChanged += (_, id) => _ = App.Current.Dispatcher.InvokeAsync(() =>
         {
-            Faders[(int)id].SoftTakeoverPending = _engine.HasSoftTakeoverPending(id);
+            Faders[(int)id].SoftTakeoverPending = _engine.HasLevelDiscrepancy(id);
             Faders[(int)id].TargetValue = _engine.LastTargetValues.TryGetValue(id, out var v) ? v : 0;
         });
         _log.EntryAdded += (_, line) => _ = App.Current.Dispatcher.InvokeAsync(() =>
@@ -662,7 +662,7 @@ public partial class MainViewModel : ObservableObject
             vm.RefreshFrom(f);
             if (Enum.TryParse<FaderId>(f.FaderId, true, out var fid))
             {
-                vm.SoftTakeoverPending = _engine.HasSoftTakeoverPending(fid);
+                vm.SoftTakeoverPending = _engine.HasLevelDiscrepancy(fid);
                 vm.TargetValue = _engine.LastTargetValues.TryGetValue(fid, out var target) ? target : 0;
                 if (_engine.LastHardwareValues.TryGetValue(fid, out var hw))
                     vm.HardwareValue = hw;

@@ -132,6 +132,38 @@ public class ControllerEngineIntegrationTests
         await engine.DisposeAsync();
     }
 
+    [Fact]
+    public async Task LevelDiscrepancy_TrueAfterInitialSnapshotWhenHwDiffersFromSw()
+    {
+        var hardware = new FakeHardware();
+        var volume = new RecordingVolumeSink { MasterVolume = 0.8 };
+        var engine = CreateEngine(hardware, volume, SyncMode.SoftTakeover);
+        engine.Start();
+
+        hardware.RaiseFader(FaderId.A, 0.1, isInitial: true);
+        await Task.Delay(150);
+
+        engine.HasLevelDiscrepancy(FaderId.A).Should().BeTrue();
+        engine.HasSoftTakeoverPending(FaderId.A).Should().BeTrue();
+        volume.MasterWrites.Should().BeEmpty();
+        await engine.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task LevelDiscrepancy_FalseWhenHwMatchesSw()
+    {
+        var hardware = new FakeHardware();
+        var volume = new RecordingVolumeSink { MasterVolume = 0.5 };
+        var engine = CreateEngine(hardware, volume, SyncMode.Absolute);
+        engine.Start();
+
+        hardware.RaiseFader(FaderId.A, 0.5, isInitial: true);
+        await Task.Delay(150);
+
+        engine.HasLevelDiscrepancy(FaderId.A).Should().BeFalse();
+        await engine.DisposeAsync();
+    }
+
     private static ControllerEngine CreateEngine(
         FakeHardware hardware, RecordingVolumeSink volume, SyncMode syncMode)
     {

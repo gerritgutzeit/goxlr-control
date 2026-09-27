@@ -61,11 +61,50 @@ public sealed class ControllerEngine : IAsyncDisposable
     public bool IsSoftTakeoverEngaged(FaderId fader) =>
         _takeovers.TryGetValue(fader, out var t) && t.Engaged;
 
-    public bool HasSoftTakeoverPending(FaderId fader)
+    public bool HasSoftTakeoverPending(FaderId fader) =>
+        TryGetBinding(fader, out var binding)
+        && binding.SyncMode == SyncMode.SoftTakeover
+        && HasLevelDiscrepancy(fader);
+
+    /// <summary>
+    /// True when mapped hardware position and Windows target differ beyond the dead-zone.
+    /// Used for LED/UI discrepancy feedback (including Absolute before the first write).
+    /// </summary>
+    public bool HasLevelDiscrepancy(FaderId fader)
     {
-        if (!_takeovers.TryGetValue(fader, out var t))
+        if (!TryGetBinding(fader, out var binding))
             return false;
-        return !t.Engaged;
+        if (binding.Target.Kind == FaderTargetKind.None)
+            return false;
+        if (!_lastHardware.TryGetValue(fader, out var hw))
+            return false;
+        if (!_lastTarget.TryGetValue(fader, out var target))
+            return false;
+
+        if (binding.SyncMode == SyncMode.SoftTakeover
+            && _takeovers.TryGetValue(fader, out var tracker)
+            && tracker.Engaged)
+            return false;
+
+        var mapped = FaderValueMapper.ApplyBinding(hw, binding);
+        return Math.Abs(mapped - target) > binding.DeadZone;
+    }
+
+    private bool TryGetBinding(FaderId fader, out FaderBinding binding)
+    {
+        lock (_gate)
+        {
+            var found = _profile.Faders.FirstOrDefault(f =>
+                f.FaderId.Equals(fader.ToString(), StringComparison.OrdinalIgnoreCase));
+            if (found is null)
+            {
+                binding = null!;
+                return false;
+            }
+
+            binding = found;
+            return true;
+        }
     }
 
     public void SetProfile(ControllerProfile profile)

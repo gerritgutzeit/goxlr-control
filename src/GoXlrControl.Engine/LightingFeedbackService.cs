@@ -318,11 +318,12 @@ public sealed class LightingFeedbackService : IAsyncDisposable
         if (muted == true)
             return ("E85D4C", "4A1C18", style, 0);
 
-        var pending = binding.SyncMode == SyncMode.SoftTakeover && _engine.HasSoftTakeoverPending(fader);
-        if (pending)
-            return ("E8A317", "4A3A10", style, 0);
-
         var accent = FaderAccentColours.Resolve(binding);
+
+        // HW ≠ SW: amber + accent TwoColour — GoXLR only exposes two colour slots per fader,
+        // not a single LED at the Windows position.
+        if (_engine.HasLevelDiscrepancy(fader))
+            return ("E8A317", Darken(accent), style, 0);
 
         if (settings.LightingMode == LightingMode.PeakProxy)
         {

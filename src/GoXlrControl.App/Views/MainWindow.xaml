@@ -240,7 +240,7 @@
                                      TextWrapping="Wrap" FontSize="12" Margin="0,4,0,0"/>
                           <TextBlock Text="{Binding SyncMode, StringFormat=Sync: {0}}" FontSize="11"
                                      Foreground="{StaticResource MutedTextBrush}" Margin="0,4,0,0"/>
-                          <TextBlock Text="Soft-Takeover: Fader an SW-Lautstärke ziehen"
+                          <TextBlock Text="HW ≠ SW — Soft-Takeover: Fader an SW ziehen · Absolute: Bewegung setzt Windows"
                                      FontSize="11" Foreground="{StaticResource WarnBrush}" TextWrapping="Wrap" Margin="0,4,0,0">
                             <TextBlock.Style>
                               <Style TargetType="TextBlock">
@@ -326,7 +326,7 @@
                       <TextBlock Text="{Binding SelectedFader.TargetTitle}" FontSize="16" FontWeight="SemiBold"
                                  Foreground="{StaticResource AccentBrush}"/>
                       <TextBlock Text="{Binding SelectedFader.TargetDetail}" TextWrapping="Wrap" Margin="0,8,0,0"/>
-                      <TextBlock Text="Soft-Takeover: Fader an die aktuelle Windows-Lautstärke ziehen, bis er greift."
+                      <TextBlock Text="HW und SW weichen ab — Soft-Takeover: Fader an die Windows-Lautstärke ziehen. Absolute: nächste Bewegung setzt Windows."
                                  Foreground="{StaticResource WarnBrush}" TextWrapping="Wrap" Margin="0,8,0,0" FontSize="12">
                         <TextBlock.Style>
                           <Style TargetType="TextBlock">
